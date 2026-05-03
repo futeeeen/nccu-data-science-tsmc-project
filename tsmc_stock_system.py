@@ -79,11 +79,20 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def time_series_split(df: pd.DataFrame, test_size: float = 0.2) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    split_idx = int(len(df) * (1 - test_size))
-    train = df.iloc[:split_idx].copy()
-    test = df.iloc[split_idx:].copy()
-    return train, test
+def time_series_split_three(
+    df: pd.DataFrame, val_size: float = 0.2, test_size: float = 0.2
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if val_size <= 0 or test_size <= 0 or val_size + test_size >= 1:
+        raise ValueError("Require val_size > 0, test_size > 0, and val_size + test_size < 1.")
+
+    n = len(df)
+    train_end = int(n * (1 - val_size - test_size))
+    val_end = int(n * (1 - test_size))
+
+    train = df.iloc[:train_end].copy()
+    val = df.iloc[train_end:val_end].copy()
+    test = df.iloc[val_end:].copy()
+    return train, val, test
 
 
 def get_models() -> Dict[str, object]:
@@ -120,32 +129,38 @@ def get_models() -> Dict[str, object]:
     return models
 
 
-def evaluate_model(name: str, model: object, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, y_test: pd.Series, test_df: pd.DataFrame) -> ModelResult:
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+def evaluate_model(
+    name: str,
+    model: object,
+    X_eval: pd.DataFrame,
+    y_eval: pd.Series,
+    eval_df: pd.DataFrame,
+    split_name: str,
+) -> ModelResult:
+    y_pred = model.predict(X_eval)
 
     if hasattr(model, "predict_proba"):
-        proba_up = model.predict_proba(X_test)[:, 1]
+        proba_up = model.predict_proba(X_eval)[:, 1]
     else:
         proba_up = y_pred.astype(float)
 
-    print(f"\n===== {name} =====")
-    print(f"Accuracy : {accuracy_score(y_test, y_pred):.4f}")
-    print(f"Precision: {precision_score(y_test, y_pred, zero_division=0):.4f}")
-    print(f"Recall   : {recall_score(y_test, y_pred, zero_division=0):.4f}")
-    print(f"F1 Score : {f1_score(y_test, y_pred, zero_division=0):.4f}")
+    print(f"\n===== {name} | {split_name} =====")
+    print(f"Accuracy : {accuracy_score(y_eval, y_pred):.4f}")
+    print(f"Precision: {precision_score(y_eval, y_pred, zero_division=0):.4f}")
+    print(f"Recall   : {recall_score(y_eval, y_pred, zero_division=0):.4f}")
+    print(f"F1 Score : {f1_score(y_eval, y_pred, zero_division=0):.4f}")
     print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
+    print(confusion_matrix(y_eval, y_pred))
     print("Classification Report:")
-    print(classification_report(y_test, y_pred, digits=4, zero_division=0))
+    print(classification_report(y_eval, y_pred, digits=4, zero_division=0))
 
     return ModelResult(
         name=name,
         model=model,
-        y_true=y_test,
+        y_true=y_eval,
         y_pred=y_pred,
         proba_up=proba_up,
-        test_df=test_df.copy(),
+        test_df=eval_df.copy(),
     )
 
 
@@ -237,45 +252,64 @@ def main() -> None:
         "macd_hist",
     ]
 
-    train_df, test_df = time_series_split(df, test_size=0.2)
+    train_df, val_df, test_df = time_series_split_three(df, val_size=0.2, test_size=0.2)
     X_train, y_train = train_df[feature_cols], train_df["target"]
+    X_val, y_val = val_df[feature_cols], val_df["target"]
     X_test, y_test = test_df[feature_cols], test_df["target"]
 
-    print(f"Train size: {len(train_df)}, Test size: {len(test_df)}")
+    print(f"Train size: {len(train_df)}, Val size: {len(val_df)}, Test size: {len(test_df)}")
 
     models = get_models()
-    results: List[ModelResult] = []
+    val_results: List[ModelResult] = []
+    test_results: List[ModelResult] = []
     for name, model in models.items():
-        result = evaluate_model(
+        model.fit(X_train, y_train)
+
+        val_result = evaluate_model(
             name=name,
             model=model,
-            X_train=X_train,
-            y_train=y_train,
-            X_test=X_test,
-            y_test=y_test,
-            test_df=test_df,
+            X_eval=X_val,
+            y_eval=y_val,
+            eval_df=val_df,
+            split_name="Validation",
         )
-        results.append(result)
+        val_results.append(val_result)
 
-    best = pick_best_model(results)
-    bt = backtest_strategy(best)
-    perf = performance_report(bt)
+        test_result = evaluate_model(
+            name=name,
+            model=model,
+            X_eval=X_test,
+            y_eval=y_test,
+            eval_df=test_df,
+            split_name="Test",
+        )
+        test_results.append(test_result)
 
-    print("\n===== Best Model By Backtest Return =====")
+    best = pick_best_model(val_results)
+    best_test = next(r for r in test_results if r.name == best.name)
+    bt_val = backtest_strategy(best)
+    perf_val = performance_report(bt_val)
+    bt_test = backtest_strategy(best_test)
+    perf_test = performance_report(bt_test)
+
+    print("\n===== Best Model By Validation Backtest Return =====")
     print(best.name)
-    print("\n===== Backtest Performance =====")
-    for k, v in perf.items():
+    print("\n===== Validation Backtest Performance =====")
+    for k, v in perf_val.items():
+        print(f"{k}: {v:.4f}")
+    print("\n===== Test Backtest Performance =====")
+    for k, v in perf_test.items():
         print(f"{k}: {v:.4f}")
 
     output = pd.DataFrame(
         {
-            "close": bt["Close"],
-            "pred_up": bt["pred_up"],
-            "position": bt["position"],
-            "strategy_ret": bt["strategy_ret"],
-            "buy_hold_ret": bt["buy_hold_ret"],
-            "strategy_cum": bt["strategy_cum"],
-            "buy_hold_cum": bt["buy_hold_cum"],
+            "close": bt_test["Close"],
+            "pred_up": bt_test["pred_up"],
+            "position": bt_test["position"],
+            "strategy_ret": bt_test["strategy_ret"],
+            "buy_hold_ret": bt_test["buy_hold_ret"],
+            "strategy_cum": bt_test["strategy_cum"],
+            "buy_hold_cum": bt_test["buy_hold_cum"],
         }
     )
     output.to_csv("backtest_result.csv", index=True)
