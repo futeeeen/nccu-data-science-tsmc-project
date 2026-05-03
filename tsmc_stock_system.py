@@ -30,6 +30,7 @@ from sklearn.metrics import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 warnings.filterwarnings("ignore")
 
@@ -108,10 +109,26 @@ def time_series_split_three(
 
 def get_models() -> Dict[str, object]:
     models: Dict[str, object] = {
-        "LogisticRegression": Pipeline(
+        # Ridge 正規化 (L2 懲罰) - 收縮權重去噪
+        "LogisticRegression_Ridge": Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(max_iter=1500, random_state=42)),
+                ("clf", LogisticRegression(penalty='l2', C=1.0, max_iter=1500, random_state=42)),
+            ]
+        ),
+        # Lasso 正規化 (L1 懲罰) - 自動特徵篩選 (會把不重要的特徵權重歸零)
+        "LogisticRegression_Lasso": Pipeline(
+            steps=[
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(penalty='l1', solver='liblinear', C=1.0, max_iter=1500, random_state=42)),
+            ]
+        ),
+        # PCA 主成份分析 + 原本的羅吉斯迴歸
+        "LogisticRegression_PCA": Pipeline(
+            steps=[
+                ("scaler", StandardScaler()),
+                ("pca", PCA(n_components=0.90)), # 擷取解釋 90% 變異數的主成份
+                ("clf", LogisticRegression(penalty='l2', max_iter=1500, random_state=42)),
             ]
         ),
         "RandomForest": RandomForestClassifier(
