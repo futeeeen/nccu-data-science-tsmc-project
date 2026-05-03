@@ -80,9 +80,9 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     #4. 百分比 MACD (Percentage MACD) : 確保不受絕對價格上漲的影響
     ema12 = out["Close"].ewm(span=12, adjust=False).mean()
     ema26 = out["Close"].ewm(span=26, adjust=False).mean()
-    out["macd_pct"] = (ema12 - ema26) / out["Close"]
-    out["macd_signal_pct"] = out["macd_pct"].ewm(span=9,adjust=False).mean()
-    out["macd_hist_pct"] = out["macd_pct"] - out["macd_signal_pct"]
+    out["macd"] = (ema12 - ema26) / out["Close"]
+    out["macd_signal"] = out["macd"].ewm(span=9,adjust=False).mean()
+    out["macd_hist"] = out["macd"] - out["macd_signal"]
     
     #Target
     out["target"] = (out["Close"].shift(-1) > out["Close"]).astype(int)
@@ -113,22 +113,15 @@ def get_models() -> Dict[str, object]:
         "LogisticRegression_Ridge": Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(penalty='l2', C=1.0, max_iter=1500, random_state=42)),
-            ]
-        ),
-        # Lasso 正規化 (L1 懲罰) - 自動特徵篩選 (會把不重要的特徵權重歸零)
-        "LogisticRegression_Lasso": Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(penalty='l1', solver='liblinear', C=1.0, max_iter=1500, random_state=42)),
+                ("clf", LogisticRegression(penalty='l2', C=1.0, max_iter=2000, random_state=42)),
             ]
         ),
         # PCA 主成份分析 + 原本的羅吉斯迴歸
-        "LogisticRegression_PCA": Pipeline(
+        "PCA_LogReg": Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
-                ("pca", PCA(n_components=0.90)), # 擷取解釋 90% 變異數的主成份
-                ("clf", LogisticRegression(penalty='l2', max_iter=1500, random_state=42)),
+                ("pca", PCA(n_components=0.90, random_state=42)), # 擷取解釋 90% 變異數的主成份
+                ("clf", LogisticRegression(penalty='l2', C=0.5, max_iter=2000, random_state=42)),
             ]
         ),
         "RandomForest": RandomForestClassifier(
@@ -263,16 +256,12 @@ def main() -> None:
     raw = download_data(ticker=ticker, start=start, end=end)
     df = add_indicators(raw)
 
+    # 修正後的 feature_cols，移除所有絕對價格與絕對均線
     feature_cols = [
-        "Open",
-        "High",
-        "Low",
-        "Close",
-        "Volume",
         "return_1d",
-        "ma_5",
-        "ma_20",
         "ma_ratio",
+        "bias_5",
+        "bias_20",
         "vol_chg",
         "rsi_14",
         "macd",

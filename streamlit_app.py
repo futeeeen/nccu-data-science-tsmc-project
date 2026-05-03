@@ -21,9 +21,9 @@ FEATURE_COLS = [
     "bias_20",
     "vol_chg",
     "rsi_14",
-    "macd_pct",         # 取代原本的 macd
-    "macd_signal_pct",  # 取代原本的 macd_signal
-    "macd_hist_pct",    # 取代原本的 macd_hist
+    "macd",         # 取代原本的 macd
+    "macd_signal",  # 取代原本的 macd_signal
+    "macd_hist",    # 取代原本的 macd_hist
 ]
 
 
