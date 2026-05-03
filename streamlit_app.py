@@ -21,25 +21,44 @@ FEATURE_COLS = [
     "bias_20",
     "vol_chg",
     "rsi_14",
-    "macd",         # 取代原本的 macd
-    "macd_signal",  # 取代原本的 macd_signal
-    "macd_hist",    # 取代原本的 macd_hist
+    "macd",        
+    "macd_signal",  
+    "macd_hist",    
 ]
 
-
+def execute_dynamic_leverage(p: float, th: float) -> float:
+    # 自訂動態槓桿邏輯
+    if p >= 0.65:
+        return 2.0  # 很有把握：開 2 倍槓桿
+    elif p >= th:
+        return 1.0  # 過門檻：正常做多
+    elif p >= 0.45:
+        return 0.5  # 稍微不確定：縮小押注到 0.5
+    else:
+        return 0.0  # 完全沒信心：空手觀望
+        
 def run_backtest(
     eval_df: pd.DataFrame, proba_up: np.ndarray, threshold: float, cost_per_trade: float
 ) -> pd.DataFrame:
     bt = eval_df.copy()
     bt["pred_prob_up"] = proba_up
-    bt["pred_up"] = (proba_up >= threshold).astype(int)
+    
+    # 決定部位大小 (動態槓桿)
+    v_func = np.vectorize(execute_dynamic_leverage)
+    bt["target_position"] = v_func(proba_up, threshold)
+    
     bt["asset_ret"] = bt["Close"].pct_change().fillna(0.0)
-    bt["position"] = bt["pred_up"].shift(1).fillna(0).astype(int)
-    bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"]).astype(int)
+    
+    # 使用前一天的決定執行
+    bt["position"] = bt["target_position"].shift(1).fillna(0)
+    bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"])
+    
+    # 成本根據變動的槓桿倍數計算
     bt["cost"] = bt["position_chg"] * cost_per_trade
     bt["strategy_ret_gross"] = bt["position"] * bt["asset_ret"]
     bt["strategy_ret"] = bt["strategy_ret_gross"] - bt["cost"]
     bt["buy_hold_ret"] = bt["asset_ret"]
+    
     bt["strategy_cum"] = (1 + bt["strategy_ret"]).cumprod()
     bt["buy_hold_cum"] = (1 + bt["buy_hold_ret"]).cumprod()
     return bt
