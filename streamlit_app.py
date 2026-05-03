@@ -15,20 +15,15 @@ from tsmc_stock_system import (
 
 
 FEATURE_COLS = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
-    "Volume",
     "return_1d",
-    "ma_5",
-    "ma_20",
     "ma_ratio",
+    "bias_5",
+    "bias_20",
     "vol_chg",
     "rsi_14",
-    "macd",
-    "macd_signal",
-    "macd_hist",
+    "macd_pct",         # 取代原本的 macd
+    "macd_signal_pct",  # 取代原本的 macd_signal
+    "macd_hist_pct",    # 取代原本的 macd_hist
 ]
 
 
