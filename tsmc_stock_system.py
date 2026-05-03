@@ -56,23 +56,34 @@ def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["return_1d"] = out["Close"].pct_change()
+    
+    #均線 (僅作為計算基準，不放入最終特徵)
     out["ma_5"] = out["Close"].rolling(5).mean()
     out["ma_20"] = out["Close"].rolling(20).mean()
+    
+    #1. 相對均線(MA Ratio)與 乖離率 (Bias: Distance to MA)
     out["ma_ratio"] = out["ma_5"] / out["ma_20"]
+    out["bias_5"] = (out["Close"] / out["ma_5"]) - 1
+    out["bias_20"] = (out["Close"] / out["ma_20"]) - 1
+    
+    #2. 成交量變化率(標準化體積)
     out["vol_chg"] = out["Volume"].pct_change()
 
+    #3. RSI 本身已是平穩化指標(0~100)
     delta = out["Close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
     rs = gain / loss.replace(0, np.nan)
     out["rsi_14"] = 100 - (100 / (1 + rs))
 
+    #4. 百分比 MACD (Percentage MACD) : 確保不受絕對價格上漲的影響
     ema12 = out["Close"].ewm(span=12, adjust=False).mean()
     ema26 = out["Close"].ewm(span=26, adjust=False).mean()
-    out["macd"] = ema12 - ema26
-    out["macd_signal"] = out["macd"].ewm(span=9, adjust=False).mean()
-    out["macd_hist"] = out["macd"] - out["macd_signal"]
-
+    out["macd_pct"] = (ema12 - ema26) / out["Close"]
+    out["macd_signal_pct"] = out["macd_pct"].ewm(span=9,adjust=False).mean()
+    out["macd_hist_pct"] = out["macd_pct"] - out["macd_signal_pct"]
+    
+    #Target
     out["target"] = (out["Close"].shift(-1) > out["Close"]).astype(int)
     out = out.replace([np.inf, -np.inf], np.nan)
     out = out.dropna().copy()
