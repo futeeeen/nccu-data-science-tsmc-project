@@ -10,7 +10,7 @@ from tsmc_stock_system import (
     download_data,
     get_models,
     performance_report,
-    time_series_split_three,
+    time_series_split_three
 )
 
 
@@ -96,8 +96,8 @@ def pick_threshold(
 
 
 def strategy_diagnostics(bt: pd.DataFrame) -> dict[str, float]:
-    in_position = bt["position"] == 1
-    entry_count = int(((bt["position"] == 1) & (bt["position"].shift(1).fillna(0) == 0)).sum())
+    in_position = bt["position"] > 0
+    entry_count = int(((bt["position"] > 0) & (bt["position"].shift(1).fillna(0) == 0)).sum())
     holding_ratio = float(bt["position"].mean())
     active_days = int(in_position.sum())
     active_ret = bt.loc[in_position, "strategy_ret"]
@@ -322,9 +322,9 @@ def main() -> None:
 
     st.subheader("Current Strategy Definition")
     strategy_note = (
-        f"- Signal rule: `pred_up = 1 if P(up) >= {selected_threshold:.2f} else 0`\n"
-        "- Execution rule: use previous-day signal (`position = pred_up.shift(1)`)\n"
-        f"- Trading cost: {cost_bps:.1f} bps per position change\n"
+        f"- Signal rule: Dynamic leverage (`target_position = f(P(up), threshold={selected_threshold:.2f})`)\n"
+        "- Execution rule: use previous-day target position (`position = target_position.shift(1)`)\n"
+        f"- Trading cost: {cost_bps:.1f} bps per position change (Δ leverage)\n"
         f"- Threshold mode: {'Auto-search on validation' if auto_threshold else 'Fixed threshold'}\n"
         "- Model selection rule: choose model with highest validation strategy total return"
     )
@@ -373,7 +373,7 @@ def main() -> None:
     st.line_chart(curve_df, use_container_width=True)
 
     st.subheader("Latest Signal Snapshot (test split)")
-    signal_df = bt_test[["Close", "pred_prob_up", "pred_up", "position"]].copy()
+    signal_df = bt_test[["Close", "pred_prob_up", "target_position", "position"]].copy()
     st.dataframe(signal_df.tail(100), use_container_width=True)
 
     latest_features = df[FEATURE_COLS].tail(1)
@@ -384,18 +384,23 @@ def main() -> None:
         if hasattr(best_model, "predict_proba")
         else float(best_model.predict(latest_features)[0])
     )
-    next_pred_up = int(next_prob_up >= selected_threshold)
+    
+    # 棄用原本的 0/1 邏輯，改用你的動態槓桿函數來計算明天的目標部位
+    next_target_position = execute_dynamic_leverage(next_prob_up, selected_threshold)
+    
     st.subheader("Next Trading Day Prediction")
     p1, p2, p3 = st.columns(3)
     p1.metric("Feature date", str(pd.to_datetime(latest_date).date()))
     p2.metric("P(up)", f"{next_prob_up:.4f}")
-    p3.metric("Signal", "UP (long)" if next_pred_up == 1 else "DOWN/NO LONG")
+    
+    # 顯示目標部位 (動態槓桿倍數) 而不是單純的 UP/DOWN
+    p3.metric("Target Position (Leverage)", f"{next_target_position:.2f}x")
 
     csv_df = bt_test[
         [
             "Close",
             "pred_prob_up",
-            "pred_up",
+            "target_position",
             "position",
             "asset_ret",
             "strategy_ret",
