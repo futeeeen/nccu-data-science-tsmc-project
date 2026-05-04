@@ -125,9 +125,9 @@ def get_models() -> Dict[str, object]:
             ]
         ),
         "RandomForest": RandomForestClassifier(
-            n_estimators=400,
-            max_depth=8,
-            min_samples_leaf=5,
+            n_estimators=500,
+            max_depth=6,
+            min_samples_leaf=10,
             random_state=42,
         ),
     }
@@ -136,16 +136,16 @@ def get_models() -> Dict[str, object]:
         from xgboost import XGBClassifier
 
         models["XGBoost"] = XGBClassifier(
-            n_estimators=400,
+            n_estimators=500,
             max_depth=4,
-            learning_rate=0.03,
-            subsample=0.9,
-            colsample_bytree=0.9,
+            learning_rate=0.01, #降低學習率, 讓模型學的更穩
+            subsample=0.8, #隨機抽取 80%樣本訓練
+            colsample_bytree=0.8, #隨機抽取 80% 特徵訓練
             eval_metric="logloss",
             random_state=42,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"XGBoost loading failed: {e}")
 
     return models
 
