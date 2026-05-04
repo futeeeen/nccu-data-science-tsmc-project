@@ -28,14 +28,14 @@ FEATURE_COLS = [
 
 def execute_dynamic_leverage(p: float, th: float) -> float:
     # 自訂動態槓桿邏輯
-    if p >= 0.65:
+    if p >= 0.60:
         return 2.0  # 很有把握：開 2 倍槓桿
     elif p >= th:
         return 1.0  # 過門檻：正常做多
-    elif p >= 0.45:
-        return 0.5  # 稍微不確定：縮小押注到 0.5
+    elif p <= 0.40:
+        return -1.0  # 很有把握下跌(上漲機率極低) : 做空
     else:
-        return 0.0  # 完全沒信心：空手觀望
+        return 0.0  # 完全沒信心：空手觀望 > 機率在0.40 ~ threshold 之間
         
 def run_backtest(
     eval_df: pd.DataFrame, proba_up: np.ndarray, threshold: float, cost_per_trade: float
