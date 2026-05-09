@@ -21,6 +21,7 @@ Thumbs.db
 backtest_result.csv
 streamlit_backtest_result.csv
 daily_signal.csv
+multi_factor_backtest_result.csv
 
 # Local model artifacts
 model_artifacts/
