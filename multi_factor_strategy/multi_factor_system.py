@@ -36,9 +36,19 @@ CHIP_COLS = [
     "dealer_net_buy_5d",
     "total_institutional_net_buy_5d",
     "total_institutional_net_buy_20d",
+    "foreign_net_buy_5d_ratio",
+    "investment_trust_net_buy_5d_ratio",
+    "dealer_net_buy_5d_ratio",
+    "total_institutional_net_buy_5d_ratio",
+    "foreign_consecutive_buy_days",
+    "investment_trust_consecutive_buy_days",
     "margin_balance_change_5d",
     "short_balance_change_5d",
 ]
+
+
+def taiwan_stock_id_from_ticker(ticker: str) -> str:
+    return ticker.split(".")[0]
 
 
 @dataclass
@@ -52,6 +62,8 @@ class FactorRunResult:
     backtest_df: pd.DataFrame
     diagnostics: dict[str, float]
     data_notes: list[str]
+    selected_threshold: float
+    threshold_table: pd.DataFrame
 
 
 def download_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -103,6 +115,120 @@ def _standardize_date_index(df: pd.DataFrame, date_col: str = "date") -> pd.Data
     return out
 
 
+def estimate_financial_available_date(period_end: pd.Timestamp) -> pd.Timestamp:
+    period_end = pd.Timestamp(period_end)
+    year = period_end.year
+    month = period_end.month
+    if month == 3:
+        return pd.Timestamp(year=year, month=5, day=15)
+    if month == 6:
+        return pd.Timestamp(year=year, month=8, day=14)
+    if month == 9:
+        return pd.Timestamp(year=year, month=11, day=14)
+    if month == 12:
+        return pd.Timestamp(year=year + 1, month=3, day=31)
+    return period_end + pd.Timedelta(days=45)
+
+
+def fetch_finmind_fundamental_eps(
+    stock_id: str, start_date: str, end_date: str, token: str | None = None
+) -> pd.DataFrame:
+    try:
+        from FinMind.data import DataLoader
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("FinMind is not installed. Run `pip install FinMind`.") from exc
+
+    dl = DataLoader()
+    if token:
+        dl.login_by_token(api_token=token)
+    financial = dl.taiwan_stock_financial_statement(
+        stock_id=stock_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if financial.empty:
+        return pd.DataFrame(columns=["date", "period_end", "eps"])
+
+    eps = financial[financial["type"].eq("EPS")].copy()
+    eps["period_end"] = pd.to_datetime(eps["date"])
+    eps["date"] = eps["period_end"].map(estimate_financial_available_date)
+    eps["eps"] = pd.to_numeric(eps["value"], errors="coerce")
+    eps = eps.sort_values("period_end")
+    return eps[["date", "period_end", "eps"]].dropna(subset=["eps"])
+
+
+def _pivot_finmind_institutional(institutional: pd.DataFrame) -> pd.DataFrame:
+    if institutional.empty:
+        return pd.DataFrame(columns=["date", "foreign_net_buy", "investment_trust_net_buy", "dealer_net_buy"])
+
+    df = institutional.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["net_buy"] = pd.to_numeric(df["buy"], errors="coerce") - pd.to_numeric(df["sell"], errors="coerce")
+    pivot = df.pivot_table(index="date", columns="name", values="net_buy", aggfunc="sum").fillna(0.0)
+
+    out = pd.DataFrame(index=pivot.index)
+    out["foreign_net_buy"] = pivot.get("Foreign_Investor", 0.0) + pivot.get("Foreign_Dealer_Self", 0.0)
+    out["investment_trust_net_buy"] = pivot.get("Investment_Trust", 0.0)
+    out["dealer_net_buy"] = pivot.get("Dealer_self", 0.0) + pivot.get("Dealer_Hedging", 0.0)
+    out = out.reset_index()
+    return out
+
+
+def _extract_margin_short(margin_df: pd.DataFrame) -> pd.DataFrame:
+    if margin_df.empty:
+        return pd.DataFrame(columns=["date", "margin_balance", "short_balance"])
+
+    df = margin_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    margin_candidates = [
+        "MarginPurchaseTodayBalance",
+        "MarginPurchaseYesterdayBalance",
+        "MarginPurchaseBuy",
+    ]
+    short_candidates = [
+        "ShortSaleTodayBalance",
+        "ShortSaleYesterdayBalance",
+        "ShortSaleSell",
+    ]
+    out = pd.DataFrame({"date": df["date"]})
+    for target, candidates in [("margin_balance", margin_candidates), ("short_balance", short_candidates)]:
+        match = next((col for col in candidates if col in df.columns), None)
+        out[target] = pd.to_numeric(df[match], errors="coerce") if match else np.nan
+    return out.drop_duplicates("date")
+
+
+def fetch_finmind_chip_data(
+    stock_id: str, start_date: str, end_date: str, token: str | None = None
+) -> pd.DataFrame:
+    try:
+        from FinMind.data import DataLoader
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("FinMind is not installed. Run `pip install FinMind`.") from exc
+
+    dl = DataLoader()
+    if token:
+        dl.login_by_token(api_token=token)
+    institutional = dl.taiwan_stock_institutional_investors(
+        stock_id=stock_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    chip = _pivot_finmind_institutional(institutional)
+
+    try:
+        margin = dl.taiwan_stock_margin_purchase_short_sale(
+            stock_id=stock_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        margin = _extract_margin_short(margin)
+        chip = chip.merge(margin, on="date", how="left")
+    except Exception:
+        chip["margin_balance"] = np.nan
+        chip["short_balance"] = np.nan
+    return chip
+
+
 def merge_fundamental_data(price_df: pd.DataFrame, fundamental_df: Optional[pd.DataFrame]) -> tuple[pd.DataFrame, str]:
     out = price_df.copy()
     if fundamental_df is None or fundamental_df.empty:
@@ -110,7 +236,11 @@ def merge_fundamental_data(price_df: pd.DataFrame, fundamental_df: Optional[pd.D
             out[col] = np.nan
         return out, "Fundamental CSV not provided. Fundamental factor will use a neutral 50 score."
 
-    fund = _standardize_date_index(fundamental_df)
+    fund_input = fundamental_df.copy()
+    if "period_end" in fund_input.columns:
+        fund_input["period_end"] = pd.to_datetime(fund_input["period_end"])
+        fund_input["date"] = fund_input["period_end"].map(estimate_financial_available_date)
+    fund = _standardize_date_index(fund_input)
     if "eps" not in fund.columns:
         raise ValueError("Fundamental CSV must include columns: date, eps.")
     fund["eps_growth_yoy"] = fund["eps"].pct_change(4)
@@ -148,6 +278,8 @@ def merge_chip_data(price_df: pd.DataFrame, chip_df: Optional[pd.DataFrame]) -> 
     chip["dealer_net_buy_5d"] = chip["dealer_net_buy"].rolling(5).sum()
     chip["total_institutional_net_buy_5d"] = chip["total_institutional_net_buy"].rolling(5).sum()
     chip["total_institutional_net_buy_20d"] = chip["total_institutional_net_buy"].rolling(20).sum()
+    chip["foreign_consecutive_buy_days"] = consecutive_positive_days(chip["foreign_net_buy"])
+    chip["investment_trust_consecutive_buy_days"] = consecutive_positive_days(chip["investment_trust_net_buy"])
 
     if "margin_balance" in chip.columns:
         chip["margin_balance_change_5d"] = chip["margin_balance"].diff(5)
@@ -158,7 +290,18 @@ def merge_chip_data(price_df: pd.DataFrame, chip_df: Optional[pd.DataFrame]) -> 
     else:
         chip["short_balance_change_5d"] = 0.0
 
-    chip = chip[CHIP_COLS].replace([np.inf, -np.inf], np.nan)
+    merge_cols = [
+        "foreign_net_buy_5d",
+        "investment_trust_net_buy_5d",
+        "dealer_net_buy_5d",
+        "total_institutional_net_buy_5d",
+        "total_institutional_net_buy_20d",
+        "foreign_consecutive_buy_days",
+        "investment_trust_consecutive_buy_days",
+        "margin_balance_change_5d",
+        "short_balance_change_5d",
+    ]
+    chip = chip[merge_cols].replace([np.inf, -np.inf], np.nan)
     merged = pd.merge_asof(
         out.sort_index(),
         chip.sort_index(),
@@ -166,7 +309,21 @@ def merge_chip_data(price_df: pd.DataFrame, chip_df: Optional[pd.DataFrame]) -> 
         right_index=True,
         direction="backward",
     )
+    vol_5d = merged["Volume"].rolling(5).sum().replace(0, np.nan)
+    merged["foreign_net_buy_5d_ratio"] = merged["foreign_net_buy_5d"] / vol_5d
+    merged["investment_trust_net_buy_5d_ratio"] = merged["investment_trust_net_buy_5d"] / vol_5d
+    merged["dealer_net_buy_5d_ratio"] = merged["dealer_net_buy_5d"] / vol_5d
+    merged["total_institutional_net_buy_5d_ratio"] = merged["total_institutional_net_buy_5d"] / vol_5d
     return merged, "Chip CSV loaded. Institutional and margin/short features are aligned by date."
+
+
+def consecutive_positive_days(series: pd.Series) -> pd.Series:
+    count = 0
+    values = []
+    for value in series.fillna(0):
+        count = count + 1 if value > 0 else 0
+        values.append(count)
+    return pd.Series(values, index=series.index)
 
 
 def time_series_split_three(
@@ -320,15 +477,51 @@ def diagnostics(bt: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def choose_final_threshold(
+    df: pd.DataFrame,
+    val_score_df: pd.DataFrame,
+    threshold_min: float,
+    threshold_max: float,
+    threshold_step: float,
+    cost_bps: float,
+) -> tuple[float, pd.DataFrame]:
+    rows = []
+    best_threshold = threshold_min
+    best_return = -np.inf
+    thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
+    for threshold in thresholds:
+        bt = run_score_backtest(df, val_score_df, float(threshold), cost_bps)
+        d = diagnostics(bt)
+        rows.append(
+            {
+                "threshold": float(threshold),
+                "validation_strategy_return": d["strategy_total_return"],
+                "validation_sharpe": d["strategy_sharpe"],
+                "validation_max_drawdown": d["strategy_max_drawdown"],
+                "validation_entry_count": d["entry_count"],
+            }
+        )
+        if d["strategy_total_return"] > best_return:
+            best_return = d["strategy_total_return"]
+            best_threshold = float(threshold)
+    return best_threshold, pd.DataFrame(rows)
+
+
 def run_multi_factor_pipeline(
     ticker: str,
     start: str,
     end: str,
     fundamental_df: Optional[pd.DataFrame] = None,
     chip_df: Optional[pd.DataFrame] = None,
+    use_finmind: bool = False,
+    finmind_token: str | None = None,
     val_size: float = 0.2,
     test_size: float = 0.2,
     final_threshold: float = 60.0,
+    auto_threshold: bool = True,
+    threshold_min: float = 40.0,
+    threshold_max: float = 80.0,
+    threshold_step: float = 2.0,
     cost_bps: float = 10.0,
     technical_weight: float = 0.2,
     fundamental_weight: float = 0.4,
@@ -337,6 +530,19 @@ def run_multi_factor_pipeline(
     notes: list[str] = []
     raw = download_price_data(ticker, start, end)
     df = add_technical_features(raw)
+    stock_id = taiwan_stock_id_from_ticker(ticker)
+    if use_finmind and fundamental_df is None:
+        try:
+            fundamental_df = fetch_finmind_fundamental_eps(stock_id, start, end, finmind_token)
+            notes.append("FinMind fundamental EPS data fetched. EPS is shifted to estimated report availability dates.")
+        except Exception as exc:
+            notes.append(f"FinMind fundamental fetch failed: {exc}")
+    if use_finmind and chip_df is None:
+        try:
+            chip_df = fetch_finmind_chip_data(stock_id, start, end, finmind_token)
+            notes.append("FinMind chip data fetched. Institutional net buy is transformed into rolling features.")
+        except Exception as exc:
+            notes.append(f"FinMind chip fetch failed: {exc}")
     df, fund_note = merge_fundamental_data(df, fundamental_df)
     notes.append(fund_note)
     df, chip_note = merge_chip_data(df, chip_df)
@@ -358,7 +564,18 @@ def run_multi_factor_pipeline(
 
     score_df = pd.concat(score_parts, axis=1)
     score_df = combine_scores(score_df, technical_weight, fundamental_weight, chip_weight)
-    backtest_df = run_score_backtest(df, score_df.loc[test_df.index], final_threshold, cost_bps)
+    threshold_table = pd.DataFrame()
+    selected_threshold = final_threshold
+    if auto_threshold:
+        selected_threshold, threshold_table = choose_final_threshold(
+            df=df,
+            val_score_df=score_df.loc[val_df.index],
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_step=threshold_step,
+            cost_bps=cost_bps,
+        )
+    backtest_df = run_score_backtest(df, score_df.loc[test_df.index], selected_threshold, cost_bps)
     return FactorRunResult(
         df=df,
         train_df=train_df,
@@ -369,4 +586,6 @@ def run_multi_factor_pipeline(
         backtest_df=backtest_df,
         diagnostics=diagnostics(backtest_df),
         data_notes=notes,
+        selected_threshold=selected_threshold,
+        threshold_table=threshold_table,
     )

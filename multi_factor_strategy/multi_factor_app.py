@@ -33,6 +33,8 @@ def main() -> None:
         ticker = st.text_input("Ticker", value="2330.TW")
         start = st.date_input("Start date", value=pd.Timestamp("2015-01-01"))
         end = st.date_input("End date", value=pd.Timestamp("2026-01-01"))
+        use_finmind = st.checkbox("Fetch fundamental/chip data from FinMind", value=True)
+        finmind_token = st.text_input("FinMind token (optional)", value="", type="password")
         fundamental_file = st.file_uploader("Fundamental CSV (date, eps)", type=["csv"])
         chip_file = st.file_uploader(
             "Chip CSV (date, foreign_net_buy, investment_trust_net_buy, dealer_net_buy)",
@@ -43,7 +45,11 @@ def main() -> None:
         technical_w = st.slider("Technical weight", 0.0, 1.0, 0.2, 0.05)
         fundamental_w = st.slider("Fundamental weight", 0.0, 1.0, 0.4, 0.05)
         chip_w = st.slider("Chip weight", 0.0, 1.0, 0.4, 0.05)
-        final_threshold = st.slider("Final score threshold", 0.0, 100.0, 60.0, 1.0)
+        auto_threshold = st.checkbox("Auto-search final threshold on validation", value=True)
+        final_threshold = st.slider("Fixed final score threshold", 0.0, 100.0, 60.0, 1.0)
+        threshold_min = st.slider("Threshold search min", 0.0, 100.0, 40.0, 1.0)
+        threshold_max = st.slider("Threshold search max", 0.0, 100.0, 80.0, 1.0)
+        threshold_step = st.select_slider("Threshold search step", options=[1.0, 2.0, 5.0], value=2.0)
         cost_bps = st.number_input("Trading cost (bps per position change)", 0.0, 100.0, 10.0, 1.0)
         run = st.button("Run multi-factor analysis", type="primary")
 
@@ -54,6 +60,15 @@ def main() -> None:
         - Raw scores are calibrated with validation percentile ranking into a 0-100 factor score.
         - Final score = technical score * technical weight + fundamental score * fundamental weight + chip score * chip weight.
         - This keeps the technical factor at the intended weight even if its raw model probabilities are conservative.
+        - EPS is aligned by estimated report availability date to reduce look-ahead bias.
+        """
+    )
+
+    st.subheader("Data Source")
+    st.markdown(
+        """
+        The app can fetch EPS and institutional investor data from FinMind. If FinMind is unavailable,
+        you can upload CSV files manually. Uploaded CSV files take priority over FinMind data.
         """
     )
 
@@ -61,7 +76,9 @@ def main() -> None:
     c1, c2 = st.columns(2)
     with c1:
         st.code(
-            "date,eps\n2021-03-31,5.39\n2021-06-30,5.18\n2021-09-30,6.03\n",
+            "date,eps\n2021-05-15,5.39\n2021-08-14,5.18\n2021-11-14,6.03\n\n"
+            "# Or use period_end and the app will estimate report availability date:\n"
+            "period_end,eps\n2021-03-31,5.39\n",
             language="csv",
         )
     with c2:
@@ -73,6 +90,9 @@ def main() -> None:
 
     if not run:
         st.info("Upload factor data if available, set weights, and click Run multi-factor analysis.")
+        return
+    if threshold_min > threshold_max:
+        st.error("Threshold search min must be less than or equal to threshold search max.")
         return
 
     tech_weight, fund_weight, chip_weight = normalize_weights(technical_w, fundamental_w, chip_w)
@@ -86,7 +106,13 @@ def main() -> None:
             end=str(end),
             fundamental_df=fundamental_df,
             chip_df=chip_df,
+            use_finmind=use_finmind,
+            finmind_token=finmind_token.strip() or None,
             final_threshold=final_threshold,
+            auto_threshold=auto_threshold,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_step=threshold_step,
             cost_bps=cost_bps,
             technical_weight=tech_weight,
             fundamental_weight=fund_weight,
@@ -112,6 +138,23 @@ def main() -> None:
     e1.metric("Entry count", f"{d['entry_count']}")
     e2.metric("Holding ratio", fmt_pct(d["holding_ratio"]))
     e3.metric("Total trading cost", fmt_pct(d["total_cost"]))
+    st.metric("Selected final score threshold", f"{result.selected_threshold:.1f}")
+
+    if auto_threshold and not result.threshold_table.empty:
+        st.subheader("Validation Threshold Search")
+        st.dataframe(
+            result.threshold_table.style.format(
+                {
+                    "threshold": "{:.1f}",
+                    "validation_strategy_return": "{:.4f}",
+                    "validation_sharpe": "{:.4f}",
+                    "validation_max_drawdown": "{:.4f}",
+                    "validation_entry_count": "{:.0f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.subheader("Score Contributions")
     latest = result.score_df.tail(1).T

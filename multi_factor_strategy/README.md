@@ -10,7 +10,15 @@ It separates the signal into three factor groups:
 
 Each factor produces its own raw model score. The raw scores are calibrated with validation percentile ranking into a 0-100 score before blending. This prevents a conservative technical model from being permanently underweighted just because its raw probabilities are compressed.
 
+The final score threshold can be fixed manually or searched on the validation split. When auto-search is enabled, the threshold with the highest validation strategy return is selected, and the test split is used only for final out-of-sample reporting.
+
 ## Quick Start
+
+Install optional FinMind support:
+
+```bash
+pip install FinMind
+```
 
 Run from this folder:
 
@@ -26,15 +34,29 @@ streamlit run multi_factor_strategy/multi_factor_app.py
 
 ## Fundamental CSV Format
 
-The fundamental CSV currently supports EPS growth:
+The app can fetch EPS from FinMind automatically. It uses `taiwan_stock_financial_statement`, filters `type == "EPS"`, and estimates when the statement becomes available to avoid look-ahead bias:
+
+- Q1 period end 03/31 -> available 05/15
+- Q2 period end 06/30 -> available 08/14
+- Q3 period end 09/30 -> available 11/14
+- Q4 period end 12/31 -> available next year 03/31
+
+If you upload CSV manually, use either already-available dates:
 
 ```csv
 date,eps
+2021-05-15,5.39
+2021-08-14,5.18
+2021-11-14,6.03
+```
+
+Or use period-end dates and let the app estimate report availability:
+
+```csv
+period_end,eps
 2021-03-31,5.39
 2021-06-30,5.18
 2021-09-30,6.03
-2021-12-31,6.41
-2022-03-31,7.82
 ```
 
 The system computes:
@@ -46,7 +68,23 @@ The data is aligned to daily stock data by report date using backward `merge_aso
 
 ## Chip CSV Format
 
-The chip CSV supports institutional and optional margin/short balance data:
+The app can fetch chip data from FinMind automatically using `taiwan_stock_institutional_investors`. It converts `buy - sell` into:
+
+- `foreign_net_buy`
+- `investment_trust_net_buy`
+- `dealer_net_buy`
+
+It also attempts to fetch margin/short balance with `taiwan_stock_margin_purchase_short_sale`. If that endpoint is unavailable, margin/short features are treated as missing or neutral.
+
+Feature engineering includes:
+
+- 5-day rolling net buy for foreign investors, investment trusts, dealers, and all institutions
+- 20-day rolling total institutional net buy
+- 5-day net buy divided by 5-day total trading volume
+- consecutive foreign/investment-trust buying days
+- 5-day margin/short balance changes when available
+
+If you upload CSV manually, use:
 
 ```csv
 date,foreign_net_buy,investment_trust_net_buy,dealer_net_buy,margin_balance,short_balance
