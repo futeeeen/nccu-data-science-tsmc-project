@@ -12,3 +12,17 @@ env/
 
 .DS_Store
 Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+
+# Generated backtest and prediction outputs
+backtest_result.csv
+streamlit_backtest_result.csv
+daily_signal.csv
+
+# Local model artifacts
+model_artifacts/
+models/*.pkl
+models/*.joblib
