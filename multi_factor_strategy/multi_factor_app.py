@@ -84,7 +84,12 @@ def render_factor_explanation(result) -> None:
     st.subheader("Factor Contribution Explanation")
     st.caption("Select a test date to inspect why fundamental and chip contributions are high or low.")
 
-    bt = result.backtest_df.copy()
+    strategy = st.radio(
+        "Strategy to explain",
+        ["Manual weighted score", "Meta model score"],
+        horizontal=True,
+    )
+    bt = result.backtest_df.copy() if strategy == "Manual weighted score" else result.meta_backtest_df.copy()
     dates = list(bt.index)
     selected_date = st.selectbox(
         "Select test date",
@@ -105,9 +110,11 @@ def render_factor_explanation(result) -> None:
         **Why this date looks this way**
 
         - Fundamental contribution is `{row['fundamental_contribution']:.1f}` because the calibrated
-          fundamental score is `{row['fundamental_score']:.1f}` and the fundamental weight is applied after calibration.
+          fundamental score is `{row['fundamental_score']:.1f}` and the manual fundamental weight is applied after calibration.
         - Chip contribution is `{row['chip_contribution']:.1f}` because the calibrated chip score is
-          `{row['chip_score']:.1f}` and the chip weight is applied after calibration.
+          `{row['chip_score']:.1f}` and the manual chip weight is applied after calibration.
+        - If `Meta model score` is selected, the final trading score is learned from the three calibrated factor scores,
+          while the contribution columns still show the manual weighted decomposition for reference.
         - Percentiles below compare the selected date's feature value against the validation-period distribution.
         """
     )
@@ -154,10 +161,65 @@ def render_factor_explanation(result) -> None:
             )
 
     st.subheader("Contribution Over Time")
-    st.line_chart(
-        bt[["fundamental_contribution", "chip_contribution", "final_score"]],
-        use_container_width=True,
+    chart_cols = ["fundamental_contribution", "chip_contribution", "final_score"]
+    if "meta_score" in bt.columns:
+        chart_cols.append("meta_score")
+    st.line_chart(bt[chart_cols], use_container_width=True)
+
+
+def render_strategy_comparison(result) -> None:
+    st.subheader("Manual Weighted Score vs Meta Model Score")
+    st.caption(
+        "Manual weighted score uses your chosen weights. Meta model learns how the three factor scores interact."
     )
+    st.dataframe(
+        result.strategy_comparison.style.format(
+            {
+                "selected_threshold": "{:.1f}",
+                "strategy_total_return": "{:.4f}",
+                "buy_hold_total_return": "{:.4f}",
+                "strategy_max_drawdown": "{:.4f}",
+                "strategy_sharpe": "{:.4f}",
+                "entry_count": "{:.0f}",
+                "holding_ratio": "{:.2%}",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("### Meta Model Training Summary")
+        st.dataframe(result.meta_model_summary, use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("### Meta Threshold Search")
+        if result.meta_threshold_table.empty:
+            st.warning("Meta threshold search was skipped because validation data was insufficient.")
+        else:
+            st.dataframe(
+                result.meta_threshold_table.style.format(
+                    {
+                        "threshold": "{:.1f}",
+                        "validation_strategy_return": "{:.4f}",
+                        "validation_sharpe": "{:.4f}",
+                        "validation_max_drawdown": "{:.4f}",
+                        "validation_entry_count": "{:.0f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.subheader("Equity Curve Comparison")
+    comparison_curve = pd.DataFrame(
+        {
+            "Manual weighted strategy": result.backtest_df["strategy_cum"],
+            "Meta model strategy": result.meta_backtest_df["strategy_cum"],
+            "Buy & Hold": result.backtest_df["buy_hold_cum"],
+        }
+    )
+    st.line_chart(comparison_curve, use_container_width=True)
 
 
 def main() -> None:
@@ -198,6 +260,7 @@ def main() -> None:
         - Final score = technical score * technical weight + fundamental score * fundamental weight + chip score * chip weight.
         - This keeps the technical factor at the intended weight even if its raw model probabilities are conservative.
         - EPS is aligned by estimated report availability date to reduce look-ahead bias.
+        - A second-stage meta model is also trained on the three calibrated factor scores, so you can compare learned relationships against manual weights.
         """
     )
 
@@ -283,7 +346,9 @@ def main() -> None:
             else:
                 st.success(note)
 
-    tab_overview, tab_explain, tab_signals = st.tabs(["Overview", "Factor Explanation", "Signals & Download"])
+    tab_overview, tab_compare, tab_explain, tab_signals = st.tabs(
+        ["Overview", "Strategy Comparison", "Factor Explanation", "Signals & Download"]
+    )
 
     with tab_overview:
         st.subheader("Factor Model Status")
@@ -338,11 +403,20 @@ def main() -> None:
         curve.columns = ["Multi-factor strategy", "Buy & Hold"]
         st.line_chart(curve, use_container_width=True)
 
+    with tab_compare:
+        render_strategy_comparison(result)
+
     with tab_explain:
         render_factor_explanation(result)
 
     with tab_signals:
         st.subheader("Latest Test Signals")
+        strategy_for_table = st.radio(
+            "Signal table strategy",
+            ["Manual weighted score", "Meta model score"],
+            horizontal=True,
+        )
+        signal_df = result.backtest_df if strategy_for_table == "Manual weighted score" else result.meta_backtest_df
         show_cols = [
             "Close",
             "technical_score",
@@ -356,9 +430,11 @@ def main() -> None:
             "strategy_cum",
             "buy_hold_cum",
         ]
-        st.dataframe(result.backtest_df[show_cols].tail(100), use_container_width=True)
+        extra_cols = ["meta_probability", "meta_score"]
+        visible_cols = [col for col in show_cols + extra_cols if col in signal_df.columns]
+        st.dataframe(signal_df[visible_cols].tail(100), use_container_width=True)
 
-        csv_bytes = result.backtest_df.to_csv(index=True).encode("utf-8-sig")
+        csv_bytes = signal_df.to_csv(index=True).encode("utf-8-sig")
         st.download_button(
             "Download multi_factor_backtest_result.csv",
             data=csv_bytes,

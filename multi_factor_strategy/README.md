@@ -12,6 +12,13 @@ Each factor produces its own raw model score. The raw scores are calibrated with
 
 The final score threshold can be fixed manually or searched on the validation split. When auto-search is enabled, the threshold with the highest validation strategy return is selected, and the test split is used only for final out-of-sample reporting.
 
+The app also trains a second-stage meta model. This model takes the three calibrated scores (`technical_score`, `fundamental_score`, `chip_score`) as inputs and learns their relationship to next-day direction. This lets you compare:
+
+- Manual weighted score: user-defined weights such as 20/40/40
+- Meta model score: learned relationship among the three factor scores
+
+For the meta model, the validation split is divided chronologically: the first half trains the meta model, and the second half selects the threshold. The test split remains reserved for final reporting.
+
 ## Quick Start
 
 Install optional FinMind support:

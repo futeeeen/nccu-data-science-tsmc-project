@@ -46,6 +46,8 @@ CHIP_COLS = [
     "short_balance_change_5d",
 ]
 
+META_SCORE_COLS = ["technical_score", "fundamental_score", "chip_score"]
+
 
 def taiwan_stock_id_from_ticker(ticker: str) -> str:
     return ticker.split(".")[0]
@@ -62,9 +64,15 @@ class FactorRunResult:
     score_df: pd.DataFrame
     backtest_df: pd.DataFrame
     diagnostics: dict[str, float]
+    meta_backtest_df: pd.DataFrame
+    meta_diagnostics: dict[str, float]
+    meta_model_summary: pd.DataFrame
+    strategy_comparison: pd.DataFrame
     data_notes: list[str]
     selected_threshold: float
     threshold_table: pd.DataFrame
+    meta_selected_threshold: float
+    meta_threshold_table: pd.DataFrame
 
 
 def download_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -546,6 +554,99 @@ def choose_final_threshold(
     return best_threshold, pd.DataFrame(rows)
 
 
+def split_validation_for_meta(val_df: pd.DataFrame) -> tuple[pd.Index, pd.Index]:
+    split_idx = max(1, len(val_df) // 2)
+    return val_df.index[:split_idx], val_df.index[split_idx:]
+
+
+def run_meta_model_strategy(
+    df: pd.DataFrame,
+    score_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    threshold_min: float,
+    threshold_max: float,
+    threshold_step: float,
+    cost_bps: float,
+) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, pd.DataFrame]:
+    meta_train_idx, meta_val_idx = split_validation_for_meta(val_df)
+    meta_train = score_df.loc[meta_train_idx, META_SCORE_COLS].join(df["target"]).dropna()
+    meta_val = score_df.loc[meta_val_idx, META_SCORE_COLS].join(df["target"]).dropna()
+
+    if len(meta_train) < 30 or len(meta_val) < 20 or meta_train["target"].nunique() < 2:
+        test_score = score_df.loc[test_df.index, META_SCORE_COLS].copy()
+        test_score["final_score"] = score_df.loc[test_df.index, "final_score"]
+        bt = run_score_backtest(df, test_score, 50.0, cost_bps)
+        summary = pd.DataFrame(
+            [{"item": "meta_model_status", "value": "neutral_insufficient_validation_data"}]
+        )
+        return bt, diagnostics(bt), summary, 50.0, pd.DataFrame()
+
+    model = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(max_iter=2000, random_state=42)),
+        ]
+    )
+    model.fit(meta_train[META_SCORE_COLS], meta_train["target"])
+
+    meta_val_score = score_df.loc[meta_val.index, META_SCORE_COLS].copy()
+    meta_val_score["final_score"] = model.predict_proba(meta_val[META_SCORE_COLS])[:, 1] * 100.0
+    selected_threshold, threshold_table = choose_final_threshold(
+        df=df,
+        val_score_df=meta_val_score,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_step=threshold_step,
+        cost_bps=cost_bps,
+    )
+
+    test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
+    test_features["meta_probability"] = model.predict_proba(test_features[META_SCORE_COLS])[:, 1]
+    test_features["meta_score"] = test_features["meta_probability"] * 100.0
+    test_score = test_features[META_SCORE_COLS + ["meta_probability", "meta_score"]].copy()
+    test_score["final_score"] = test_features["meta_score"]
+    bt = run_score_backtest(df, test_score, selected_threshold, cost_bps)
+
+    clf = model.named_steps["clf"]
+    coef = clf.coef_[0]
+    summary_rows = [
+        {"item": "meta_model_status", "value": "model"},
+        {"item": "meta_train_rows", "value": len(meta_train)},
+        {"item": "meta_validation_rows", "value": len(meta_val)},
+        {"item": "meta_selected_threshold", "value": selected_threshold},
+    ]
+    for feature, value in zip(META_SCORE_COLS, coef):
+        summary_rows.append({"item": f"coef_{feature}", "value": float(value)})
+    return bt, diagnostics(bt), pd.DataFrame(summary_rows), selected_threshold, threshold_table
+
+
+def build_strategy_comparison(
+    weighted_diagnostics: dict[str, float],
+    meta_diagnostics: dict[str, float],
+    selected_threshold: float,
+    meta_selected_threshold: float,
+) -> pd.DataFrame:
+    rows = []
+    for name, d, threshold in [
+        ("manual_weighted_score", weighted_diagnostics, selected_threshold),
+        ("meta_model_score", meta_diagnostics, meta_selected_threshold),
+    ]:
+        rows.append(
+            {
+                "strategy": name,
+                "selected_threshold": threshold,
+                "strategy_total_return": d["strategy_total_return"],
+                "buy_hold_total_return": d["buy_hold_total_return"],
+                "strategy_max_drawdown": d["strategy_max_drawdown"],
+                "strategy_sharpe": d["strategy_sharpe"],
+                "entry_count": d["entry_count"],
+                "holding_ratio": d["holding_ratio"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def run_multi_factor_pipeline(
     ticker: str,
     start: str,
@@ -618,6 +719,18 @@ def run_multi_factor_pipeline(
         )
     backtest_df = run_score_backtest(df, score_df.loc[test_df.index], selected_threshold, cost_bps)
     backtest_df = add_feature_percentiles(backtest_df, val_df, FUNDAMENTAL_COLS + CHIP_COLS)
+    meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_threshold_table = run_meta_model_strategy(
+        df=df,
+        score_df=score_df,
+        val_df=val_df,
+        test_df=test_df,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_step=threshold_step,
+        cost_bps=cost_bps,
+    )
+    meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, FUNDAMENTAL_COLS + CHIP_COLS)
+    weighted_d = diagnostics(backtest_df)
     return FactorRunResult(
         df=df,
         train_df=train_df,
@@ -627,8 +740,14 @@ def run_multi_factor_pipeline(
         factor_data_summary=pd.DataFrame(summary_rows),
         score_df=score_df,
         backtest_df=backtest_df,
-        diagnostics=diagnostics(backtest_df),
+        diagnostics=weighted_d,
+        meta_backtest_df=meta_backtest_df,
+        meta_diagnostics=meta_d,
+        meta_model_summary=meta_summary,
+        strategy_comparison=build_strategy_comparison(weighted_d, meta_d, selected_threshold, meta_threshold),
         data_notes=notes,
         selected_threshold=selected_threshold,
         threshold_table=threshold_table,
+        meta_selected_threshold=meta_threshold,
+        meta_threshold_table=meta_threshold_table,
     )
