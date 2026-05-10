@@ -478,6 +478,18 @@ def run_score_backtest(df: pd.DataFrame, score_df: pd.DataFrame, threshold: floa
     return bt
 
 
+def add_feature_percentiles(
+    backtest_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    feature_cols: list[str],
+) -> pd.DataFrame:
+    out = backtest_df.copy()
+    for col in feature_cols:
+        if col in out.columns and col in val_df.columns:
+            out[f"{col}_pct_rank"] = percentile_score(out[col], val_df[col])
+    return out
+
+
 def max_drawdown(cum: pd.Series) -> float:
     roll_max = cum.cummax()
     return float((cum / roll_max - 1).min())
@@ -605,6 +617,7 @@ def run_multi_factor_pipeline(
             cost_bps=cost_bps,
         )
     backtest_df = run_score_backtest(df, score_df.loc[test_df.index], selected_threshold, cost_bps)
+    backtest_df = add_feature_percentiles(backtest_df, val_df, FUNDAMENTAL_COLS + CHIP_COLS)
     return FactorRunResult(
         df=df,
         train_df=train_df,

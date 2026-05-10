@@ -52,6 +52,114 @@ def render_factor_status(result) -> None:
     )
 
 
+def describe_score_level(score: float) -> str:
+    if score >= 75:
+        return "high"
+    if score >= 55:
+        return "moderately high"
+    if score >= 45:
+        return "neutral"
+    if score >= 25:
+        return "moderately low"
+    return "low"
+
+
+def factor_explanation_table(row: pd.Series, feature_cols: list[str]) -> pd.DataFrame:
+    records = []
+    for col in feature_cols:
+        pct_col = f"{col}_pct_rank"
+        if col in row.index and pct_col in row.index and pd.notna(row[col]):
+            records.append(
+                {
+                    "feature": col,
+                    "value": row[col],
+                    "validation_percentile": row[pct_col],
+                    "interpretation": describe_score_level(float(row[pct_col])),
+                }
+            )
+    return pd.DataFrame(records).sort_values("validation_percentile", ascending=False)
+
+
+def render_factor_explanation(result) -> None:
+    st.subheader("Factor Contribution Explanation")
+    st.caption("Select a test date to inspect why fundamental and chip contributions are high or low.")
+
+    bt = result.backtest_df.copy()
+    dates = list(bt.index)
+    selected_date = st.selectbox(
+        "Select test date",
+        dates,
+        index=len(dates) - 1,
+        format_func=lambda x: str(pd.to_datetime(x).date()),
+    )
+    row = bt.loc[selected_date]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Fundamental score", f"{row['fundamental_score']:.1f}")
+    c2.metric("Fundamental contribution", f"{row['fundamental_contribution']:.1f}")
+    c3.metric("Chip score", f"{row['chip_score']:.1f}")
+    c4.metric("Chip contribution", f"{row['chip_contribution']:.1f}")
+
+    st.markdown(
+        f"""
+        **Why this date looks this way**
+
+        - Fundamental contribution is `{row['fundamental_contribution']:.1f}` because the calibrated
+          fundamental score is `{row['fundamental_score']:.1f}` and the fundamental weight is applied after calibration.
+        - Chip contribution is `{row['chip_contribution']:.1f}` because the calibrated chip score is
+          `{row['chip_score']:.1f}` and the chip weight is applied after calibration.
+        - Percentiles below compare the selected date's feature value against the validation-period distribution.
+        """
+    )
+
+    fundamental_features = ["eps", "eps_growth_yoy", "eps_growth_qoq"]
+    chip_features = [
+        "foreign_net_buy_5d",
+        "investment_trust_net_buy_5d",
+        "dealer_net_buy_5d",
+        "total_institutional_net_buy_5d",
+        "total_institutional_net_buy_20d",
+        "foreign_net_buy_5d_ratio",
+        "investment_trust_net_buy_5d_ratio",
+        "dealer_net_buy_5d_ratio",
+        "total_institutional_net_buy_5d_ratio",
+        "foreign_consecutive_buy_days",
+        "investment_trust_consecutive_buy_days",
+        "margin_balance_change_5d",
+        "short_balance_change_5d",
+    ]
+
+    f_col, c_col = st.columns(2)
+    with f_col:
+        st.markdown("### Fundamental drivers")
+        f_table = factor_explanation_table(row, fundamental_features)
+        if f_table.empty:
+            st.warning("No fundamental driver data is available for this date.")
+        else:
+            st.dataframe(
+                f_table.style.format({"value": "{:.4f}", "validation_percentile": "{:.1f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+    with c_col:
+        st.markdown("### Chip drivers")
+        c_table = factor_explanation_table(row, chip_features)
+        if c_table.empty:
+            st.warning("No chip driver data is available for this date.")
+        else:
+            st.dataframe(
+                c_table.style.format({"value": "{:.4f}", "validation_percentile": "{:.1f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.subheader("Contribution Over Time")
+    st.line_chart(
+        bt[["fundamental_contribution", "chip_contribution", "final_score"]],
+        use_container_width=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
     st.title("TSMC Multi-Factor Investment Analysis")
@@ -155,79 +263,88 @@ def main() -> None:
             else:
                 st.success(note)
 
-    st.subheader("Factor Model Status")
-    st.dataframe(result.factor_table, use_container_width=True, hide_index=True)
-    render_factor_status(result)
+    tab_overview, tab_explain, tab_signals = st.tabs(["Overview", "Factor Explanation", "Signals & Download"])
 
-    st.subheader("Performance")
-    d = result.diagnostics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Strategy return", fmt_pct(d["strategy_total_return"]))
-    m2.metric("Buy & Hold return", fmt_pct(d["buy_hold_total_return"]))
-    m3.metric("Strategy Sharpe", f"{d['strategy_sharpe']:.3f}")
-    m4.metric("Max drawdown", fmt_pct(d["strategy_max_drawdown"]))
+    with tab_overview:
+        st.subheader("Factor Model Status")
+        st.dataframe(result.factor_table, use_container_width=True, hide_index=True)
+        render_factor_status(result)
 
-    e1, e2, e3 = st.columns(3)
-    e1.metric("Entry count", f"{d['entry_count']}")
-    e2.metric("Holding ratio", fmt_pct(d["holding_ratio"]))
-    e3.metric("Total trading cost", fmt_pct(d["total_cost"]))
-    st.metric("Selected final score threshold", f"{result.selected_threshold:.1f}")
+        st.subheader("Performance")
+        d = result.diagnostics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Strategy return", fmt_pct(d["strategy_total_return"]))
+        m2.metric("Buy & Hold return", fmt_pct(d["buy_hold_total_return"]))
+        m3.metric("Strategy Sharpe", f"{d['strategy_sharpe']:.3f}")
+        m4.metric("Max drawdown", fmt_pct(d["strategy_max_drawdown"]))
 
-    if auto_threshold and not result.threshold_table.empty:
-        st.subheader("Validation Threshold Search")
-        st.dataframe(
-            result.threshold_table.style.format(
-                {
-                    "threshold": "{:.1f}",
-                    "validation_strategy_return": "{:.4f}",
-                    "validation_sharpe": "{:.4f}",
-                    "validation_max_drawdown": "{:.4f}",
-                    "validation_entry_count": "{:.0f}",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Entry count", f"{d['entry_count']}")
+        e2.metric("Holding ratio", fmt_pct(d["holding_ratio"]))
+        e3.metric("Total trading cost", fmt_pct(d["total_cost"]))
+        st.metric("Selected final score threshold", f"{result.selected_threshold:.1f}")
+
+        if auto_threshold and not result.threshold_table.empty:
+            st.subheader("Validation Threshold Search")
+            st.dataframe(
+                result.threshold_table.style.format(
+                    {
+                        "threshold": "{:.1f}",
+                        "validation_strategy_return": "{:.4f}",
+                        "validation_sharpe": "{:.4f}",
+                        "validation_max_drawdown": "{:.4f}",
+                        "validation_entry_count": "{:.0f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.subheader("Score Contributions")
+        latest = result.score_df.tail(1).T
+        latest.columns = ["latest_value"]
+        st.dataframe(latest, use_container_width=True)
+
+        contribution_cols = [
+            "technical_contribution",
+            "fundamental_contribution",
+            "chip_contribution",
+            "final_score",
+        ]
+        st.line_chart(result.score_df[contribution_cols], use_container_width=True)
+
+        st.subheader("Equity Curve")
+        curve = result.backtest_df[["strategy_cum", "buy_hold_cum"]].copy()
+        curve.columns = ["Multi-factor strategy", "Buy & Hold"]
+        st.line_chart(curve, use_container_width=True)
+
+    with tab_explain:
+        render_factor_explanation(result)
+
+    with tab_signals:
+        st.subheader("Latest Test Signals")
+        show_cols = [
+            "Close",
+            "technical_score",
+            "fundamental_score",
+            "chip_score",
+            "final_score",
+            "fundamental_contribution",
+            "chip_contribution",
+            "target_position",
+            "position",
+            "strategy_cum",
+            "buy_hold_cum",
+        ]
+        st.dataframe(result.backtest_df[show_cols].tail(100), use_container_width=True)
+
+        csv_bytes = result.backtest_df.to_csv(index=True).encode("utf-8-sig")
+        st.download_button(
+            "Download multi_factor_backtest_result.csv",
+            data=csv_bytes,
+            file_name="multi_factor_backtest_result.csv",
+            mime="text/csv",
         )
-
-    st.subheader("Score Contributions")
-    latest = result.score_df.tail(1).T
-    latest.columns = ["latest_value"]
-    st.dataframe(latest, use_container_width=True)
-
-    contribution_cols = [
-        "technical_contribution",
-        "fundamental_contribution",
-        "chip_contribution",
-        "final_score",
-    ]
-    st.line_chart(result.score_df[contribution_cols], use_container_width=True)
-
-    st.subheader("Equity Curve")
-    curve = result.backtest_df[["strategy_cum", "buy_hold_cum"]].copy()
-    curve.columns = ["Multi-factor strategy", "Buy & Hold"]
-    st.line_chart(curve, use_container_width=True)
-
-    st.subheader("Latest Test Signals")
-    show_cols = [
-        "Close",
-        "technical_score",
-        "fundamental_score",
-        "chip_score",
-        "final_score",
-        "target_position",
-        "position",
-        "strategy_cum",
-        "buy_hold_cum",
-    ]
-    st.dataframe(result.backtest_df[show_cols].tail(100), use_container_width=True)
-
-    csv_bytes = result.backtest_df.to_csv(index=True).encode("utf-8-sig")
-    st.download_button(
-        "Download multi_factor_backtest_result.csv",
-        data=csv_bytes,
-        file_name="multi_factor_backtest_result.csv",
-        mime="text/csv",
-    )
 
 
 if __name__ == "__main__":
