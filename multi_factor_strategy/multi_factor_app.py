@@ -225,36 +225,56 @@ def main() -> None:
             language="csv",
         )
 
-    if not run:
+    if run:
+        if threshold_min > threshold_max:
+            st.error("Threshold search min must be less than or equal to threshold search max.")
+            return
+
+        tech_weight, fund_weight, chip_weight = normalize_weights(technical_w, fundamental_w, chip_w)
+        fundamental_df = read_optional_csv(fundamental_file)
+        chip_df = read_optional_csv(chip_file)
+
+        with st.spinner("Running multi-factor pipeline..."):
+            result = run_multi_factor_pipeline(
+                ticker=ticker,
+                start=str(start),
+                end=str(end),
+                fundamental_df=fundamental_df,
+                chip_df=chip_df,
+                use_finmind=use_finmind,
+                finmind_token=finmind_token.strip() or None,
+                final_threshold=final_threshold,
+                auto_threshold=auto_threshold,
+                threshold_min=threshold_min,
+                threshold_max=threshold_max,
+                threshold_step=threshold_step,
+                cost_bps=cost_bps,
+                technical_weight=tech_weight,
+                fundamental_weight=fund_weight,
+                chip_weight=chip_weight,
+            )
+        st.session_state["multi_factor_result"] = result
+        st.session_state["multi_factor_params"] = {
+            "ticker": ticker,
+            "start": str(start),
+            "end": str(end),
+            "technical_weight": tech_weight,
+            "fundamental_weight": fund_weight,
+            "chip_weight": chip_weight,
+            "auto_threshold": auto_threshold,
+            "cost_bps": cost_bps,
+        }
+
+    result = st.session_state.get("multi_factor_result")
+    if result is None:
         st.info("Upload factor data if available, set weights, and click Run multi-factor analysis.")
         return
-    if threshold_min > threshold_max:
-        st.error("Threshold search min must be less than or equal to threshold search max.")
-        return
 
-    tech_weight, fund_weight, chip_weight = normalize_weights(technical_w, fundamental_w, chip_w)
-    fundamental_df = read_optional_csv(fundamental_file)
-    chip_df = read_optional_csv(chip_file)
-
-    with st.spinner("Running multi-factor pipeline..."):
-        result = run_multi_factor_pipeline(
-            ticker=ticker,
-            start=str(start),
-            end=str(end),
-            fundamental_df=fundamental_df,
-            chip_df=chip_df,
-            use_finmind=use_finmind,
-            finmind_token=finmind_token.strip() or None,
-            final_threshold=final_threshold,
-            auto_threshold=auto_threshold,
-            threshold_min=threshold_min,
-            threshold_max=threshold_max,
-            threshold_step=threshold_step,
-            cost_bps=cost_bps,
-            technical_weight=tech_weight,
-            fundamental_weight=fund_weight,
-            chip_weight=chip_weight,
-        )
+    params = st.session_state.get("multi_factor_params", {})
+    st.caption(
+        "Showing cached result from the last run"
+        + (f": {params.get('ticker')} ({params.get('start')} to {params.get('end')})." if params else ".")
+    )
 
     with st.expander("Data Notes", expanded=False):
         for note in result.data_notes:
