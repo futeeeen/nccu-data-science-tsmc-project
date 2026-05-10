@@ -719,11 +719,56 @@ def main() -> None:
         strategy_label = st.selectbox(tr(lang, "strategy_mode"), list(strategy_options.keys()), index=1)
         strategy_mode = strategy_options[strategy_label]
         auto_threshold = st.checkbox(tr(lang, "auto_threshold"), value=True)
-        final_threshold = st.slider(tr(lang, "fixed_threshold"), 0.0, 100.0, 60.0, 1.0)
-        sell_threshold = st.slider(tr(lang, "fixed_sell_threshold"), 0.0, 100.0, 45.0, 1.0)
-        threshold_min = st.slider(tr(lang, "threshold_min"), 0.0, 100.0, 40.0, 1.0)
-        threshold_max = st.slider(tr(lang, "threshold_max"), 0.0, 100.0, 80.0, 1.0)
-        threshold_step = st.select_slider(tr(lang, "threshold_step"), options=[1.0, 2.0, 5.0], value=2.0)
+        if auto_threshold:
+            st.caption(
+                "Auto-search is enabled. Fixed thresholds are ignored."
+                if lang == "en"
+                else "目前啟用自動搜尋，固定買入 / 賣出門檻不會被使用。"
+            )
+        else:
+            st.caption(
+                "Auto-search is disabled. Search range settings are ignored."
+                if lang == "en"
+                else "目前關閉自動搜尋，門檻搜尋範圍不會被使用。"
+            )
+        final_threshold = st.slider(
+            tr(lang, "fixed_threshold"),
+            0.0,
+            100.0,
+            60.0,
+            1.0,
+            disabled=auto_threshold,
+        )
+        sell_threshold = st.slider(
+            tr(lang, "fixed_sell_threshold"),
+            0.0,
+            100.0,
+            45.0,
+            1.0,
+            disabled=auto_threshold,
+        )
+        threshold_min = st.slider(
+            tr(lang, "threshold_min"),
+            0.0,
+            100.0,
+            40.0,
+            1.0,
+            disabled=not auto_threshold,
+        )
+        threshold_max = st.slider(
+            tr(lang, "threshold_max"),
+            0.0,
+            100.0,
+            80.0,
+            1.0,
+            disabled=not auto_threshold,
+        )
+        threshold_step = st.select_slider(
+            tr(lang, "threshold_step"),
+            options=[1.0, 2.0, 5.0],
+            value=2.0,
+            disabled=not auto_threshold,
+        )
         cost_bps = st.number_input(tr(lang, "cost_bps"), 0.0, 100.0, 10.0, 1.0)
         run = st.button(tr(lang, "run"), type="primary")
 
