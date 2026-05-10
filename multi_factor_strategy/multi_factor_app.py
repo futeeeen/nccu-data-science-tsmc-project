@@ -23,6 +23,35 @@ def normalize_weights(technical: float, fundamental: float, chip: float) -> tupl
     return technical / total, fundamental / total, chip / total
 
 
+def render_factor_status(result) -> None:
+    st.subheader("Factor Training Overview")
+    status_map = result.factor_data_summary.set_index("factor").to_dict("index")
+    cols = st.columns(3)
+    for idx, factor in enumerate(["technical", "fundamental", "chip"]):
+        info = status_map.get(factor, {})
+        status = str(info.get("status", "unknown"))
+        label = status.replace("_", " ").title()
+        cols[idx].metric(
+            f"{factor.title()} factor",
+            label,
+            f"{int(info.get('feature_count', 0))} features",
+        )
+
+    st.dataframe(
+        result.factor_data_summary.style.format(
+            {
+                "overall_coverage": "{:.2%}",
+                "feature_count": "{:.0f}",
+                "train_usable_rows": "{:.0f}",
+                "validation_usable_rows": "{:.0f}",
+                "test_usable_rows": "{:.0f}",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
     st.title("TSMC Multi-Factor Investment Analysis")
@@ -119,12 +148,16 @@ def main() -> None:
             chip_weight=chip_weight,
         )
 
-    st.subheader("Data Notes")
-    for note in result.data_notes:
-        st.warning(note) if "not provided" in note else st.success(note)
+    with st.expander("Data Notes", expanded=False):
+        for note in result.data_notes:
+            if "not provided" in note or "failed" in note:
+                st.warning(note)
+            else:
+                st.success(note)
 
     st.subheader("Factor Model Status")
     st.dataframe(result.factor_table, use_container_width=True, hide_index=True)
+    render_factor_status(result)
 
     st.subheader("Performance")
     d = result.diagnostics

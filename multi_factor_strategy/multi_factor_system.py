@@ -58,6 +58,7 @@ class FactorRunResult:
     val_df: pd.DataFrame
     test_df: pd.DataFrame
     factor_table: pd.DataFrame
+    factor_data_summary: pd.DataFrame
     score_df: pd.DataFrame
     backtest_df: pd.DataFrame
     diagnostics: dict[str, float]
@@ -410,6 +411,32 @@ def fit_predict_factor(
     return score, {"factor": factor_name, "status": "model", "validation_raw_mean": float(val_raw.mean())}
 
 
+def factor_data_summary(
+    factor_name: str,
+    feature_cols: list[str],
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    status: str,
+) -> dict[str, float | int | str]:
+    def usable_rows(part: pd.DataFrame) -> int:
+        if not all(col in part.columns for col in feature_cols):
+            return 0
+        return int(part[feature_cols].replace([np.inf, -np.inf], np.nan).dropna(how="all").shape[0])
+
+    coverage_base = len(train_df) + len(val_df) + len(test_df)
+    usable_total = usable_rows(train_df) + usable_rows(val_df) + usable_rows(test_df)
+    return {
+        "factor": factor_name,
+        "status": status,
+        "feature_count": len(feature_cols),
+        "train_usable_rows": usable_rows(train_df),
+        "validation_usable_rows": usable_rows(val_df),
+        "test_usable_rows": usable_rows(test_df),
+        "overall_coverage": usable_total / coverage_base if coverage_base else 0.0,
+    }
+
+
 def percentile_score(values: pd.Series, reference: pd.Series) -> pd.Series:
     ref = reference.dropna().sort_values().to_numpy()
     if len(ref) == 0:
@@ -553,6 +580,7 @@ def run_multi_factor_pipeline(
     train_df, val_df, test_df = time_series_split_three(df, val_size=val_size, test_size=test_size)
     score_parts = []
     factor_rows = []
+    summary_rows = []
     for factor_name, cols in [
         ("technical", TECHNICAL_COLS),
         ("fundamental", FUNDAMENTAL_COLS),
@@ -561,6 +589,7 @@ def run_multi_factor_pipeline(
         score, row = fit_predict_factor(factor_name, train_df, val_df, test_df, cols)
         score_parts.append(score)
         factor_rows.append(row)
+        summary_rows.append(factor_data_summary(factor_name, cols, train_df, val_df, test_df, str(row["status"])))
 
     score_df = pd.concat(score_parts, axis=1)
     score_df = combine_scores(score_df, technical_weight, fundamental_weight, chip_weight)
@@ -582,6 +611,7 @@ def run_multi_factor_pipeline(
         val_df=val_df,
         test_df=test_df,
         factor_table=pd.DataFrame(factor_rows),
+        factor_data_summary=pd.DataFrame(summary_rows),
         score_df=score_df,
         backtest_df=backtest_df,
         diagnostics=diagnostics(backtest_df),
