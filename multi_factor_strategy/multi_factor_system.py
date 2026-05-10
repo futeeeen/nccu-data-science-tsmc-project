@@ -53,6 +53,11 @@ def taiwan_stock_id_from_ticker(ticker: str) -> str:
     return ticker.split(".")[0]
 
 
+def is_taiwan_stock_ticker(ticker: str) -> bool:
+    stock_id = taiwan_stock_id_from_ticker(ticker.strip())
+    return ticker.upper().strip().endswith(".TW") or stock_id.isdigit()
+
+
 @dataclass
 class FactorRunResult:
     df: pd.DataFrame
@@ -70,9 +75,12 @@ class FactorRunResult:
     strategy_comparison: pd.DataFrame
     data_notes: list[str]
     selected_threshold: float
+    selected_sell_threshold: float
     threshold_table: pd.DataFrame
     meta_selected_threshold: float
+    meta_selected_sell_threshold: float
     meta_threshold_table: pd.DataFrame
+    strategy_mode: str
 
 
 def download_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -471,10 +479,45 @@ def combine_scores(
     return out
 
 
-def run_score_backtest(df: pd.DataFrame, score_df: pd.DataFrame, threshold: float, cost_bps: float) -> pd.DataFrame:
+def build_target_position(
+    scores: pd.Series,
+    buy_threshold: float,
+    sell_threshold: float | None = None,
+    strategy_mode: str = "single_threshold",
+) -> pd.Series:
+    if strategy_mode == "hysteresis":
+        exit_threshold = buy_threshold if sell_threshold is None else sell_threshold
+        position = 0.0
+        positions = []
+        for score in scores:
+            if position == 0.0 and score >= buy_threshold:
+                position = 1.0
+            elif position == 1.0 and score <= exit_threshold:
+                position = 0.0
+            positions.append(position)
+        return pd.Series(positions, index=scores.index, dtype=float)
+    return (scores >= buy_threshold).astype(float)
+
+
+def run_score_backtest(
+    df: pd.DataFrame,
+    score_df: pd.DataFrame,
+    threshold: float,
+    cost_bps: float,
+    sell_threshold: float | None = None,
+    strategy_mode: str = "single_threshold",
+) -> pd.DataFrame:
     bt = df.loc[score_df.index].copy()
     bt = bt.join(score_df, how="left")
-    bt["target_position"] = (bt["final_score"] >= threshold).astype(float)
+    bt["buy_threshold"] = float(threshold)
+    bt["sell_threshold"] = float(threshold if sell_threshold is None else sell_threshold)
+    bt["strategy_mode"] = strategy_mode
+    bt["target_position"] = build_target_position(
+        bt["final_score"],
+        buy_threshold=threshold,
+        sell_threshold=sell_threshold,
+        strategy_mode=strategy_mode,
+    )
     bt["position"] = bt["target_position"].shift(1).fillna(0.0)
     bt["asset_ret"] = bt["Close"].pct_change().fillna(0.0)
     bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"])
@@ -531,9 +574,10 @@ def choose_final_threshold(
     threshold_max: float,
     threshold_step: float,
     cost_bps: float,
-) -> tuple[float, pd.DataFrame]:
+) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_threshold = threshold_min
+    best_sell_threshold = threshold_min
     best_return = -np.inf
     thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
     for threshold in thresholds:
@@ -551,7 +595,52 @@ def choose_final_threshold(
         if d["strategy_total_return"] > best_return:
             best_return = d["strategy_total_return"]
             best_threshold = float(threshold)
-    return best_threshold, pd.DataFrame(rows)
+            best_sell_threshold = float(threshold)
+    return best_threshold, best_sell_threshold, pd.DataFrame(rows)
+
+
+def choose_hysteresis_thresholds(
+    df: pd.DataFrame,
+    val_score_df: pd.DataFrame,
+    threshold_min: float,
+    threshold_max: float,
+    threshold_step: float,
+    cost_bps: float,
+) -> tuple[float, float, pd.DataFrame]:
+    rows = []
+    best_buy_threshold = threshold_min
+    best_sell_threshold = threshold_min
+    best_return = -np.inf
+    thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
+    for buy_threshold in thresholds:
+        for sell_threshold in thresholds:
+            if sell_threshold > buy_threshold:
+                continue
+            bt = run_score_backtest(
+                df,
+                val_score_df,
+                float(buy_threshold),
+                cost_bps,
+                sell_threshold=float(sell_threshold),
+                strategy_mode="hysteresis",
+            )
+            d = diagnostics(bt)
+            rows.append(
+                {
+                    "buy_threshold": float(buy_threshold),
+                    "sell_threshold": float(sell_threshold),
+                    "validation_strategy_return": d["strategy_total_return"],
+                    "validation_sharpe": d["strategy_sharpe"],
+                    "validation_max_drawdown": d["strategy_max_drawdown"],
+                    "validation_entry_count": d["entry_count"],
+                    "validation_holding_ratio": d["holding_ratio"],
+                }
+            )
+            if d["strategy_total_return"] > best_return:
+                best_return = d["strategy_total_return"]
+                best_buy_threshold = float(buy_threshold)
+                best_sell_threshold = float(sell_threshold)
+    return best_buy_threshold, best_sell_threshold, pd.DataFrame(rows)
 
 
 def split_validation_for_meta(val_df: pd.DataFrame) -> tuple[pd.Index, pd.Index]:
@@ -568,7 +657,9 @@ def run_meta_model_strategy(
     threshold_max: float,
     threshold_step: float,
     cost_bps: float,
-) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, pd.DataFrame]:
+    strategy_mode: str,
+    fixed_sell_threshold: float,
+) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, float, pd.DataFrame]:
     meta_train_idx, meta_val_idx = split_validation_for_meta(val_df)
     meta_train = score_df.loc[meta_train_idx, META_SCORE_COLS].join(df["target"]).dropna()
     meta_val = score_df.loc[meta_val_idx, META_SCORE_COLS].join(df["target"]).dropna()
@@ -576,11 +667,18 @@ def run_meta_model_strategy(
     if len(meta_train) < 30 or len(meta_val) < 20 or meta_train["target"].nunique() < 2:
         test_score = score_df.loc[test_df.index, META_SCORE_COLS].copy()
         test_score["final_score"] = score_df.loc[test_df.index, "final_score"]
-        bt = run_score_backtest(df, test_score, 50.0, cost_bps)
+        bt = run_score_backtest(
+            df,
+            test_score,
+            50.0,
+            cost_bps,
+            sell_threshold=fixed_sell_threshold if strategy_mode == "hysteresis" else None,
+            strategy_mode=strategy_mode,
+        )
         summary = pd.DataFrame(
             [{"item": "meta_model_status", "value": "neutral_insufficient_validation_data"}]
         )
-        return bt, diagnostics(bt), summary, 50.0, pd.DataFrame()
+        return bt, diagnostics(bt), summary, 50.0, fixed_sell_threshold, pd.DataFrame()
 
     model = Pipeline(
         steps=[
@@ -592,21 +690,38 @@ def run_meta_model_strategy(
 
     meta_val_score = score_df.loc[meta_val.index, META_SCORE_COLS].copy()
     meta_val_score["final_score"] = model.predict_proba(meta_val[META_SCORE_COLS])[:, 1] * 100.0
-    selected_threshold, threshold_table = choose_final_threshold(
-        df=df,
-        val_score_df=meta_val_score,
-        threshold_min=threshold_min,
-        threshold_max=threshold_max,
-        threshold_step=threshold_step,
-        cost_bps=cost_bps,
-    )
+    if strategy_mode == "hysteresis":
+        selected_threshold, selected_sell_threshold, threshold_table = choose_hysteresis_thresholds(
+            df=df,
+            val_score_df=meta_val_score,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_step=threshold_step,
+            cost_bps=cost_bps,
+        )
+    else:
+        selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
+            df=df,
+            val_score_df=meta_val_score,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_step=threshold_step,
+            cost_bps=cost_bps,
+        )
 
     test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
     test_features["meta_probability"] = model.predict_proba(test_features[META_SCORE_COLS])[:, 1]
     test_features["meta_score"] = test_features["meta_probability"] * 100.0
     test_score = test_features[META_SCORE_COLS + ["meta_probability", "meta_score"]].copy()
     test_score["final_score"] = test_features["meta_score"]
-    bt = run_score_backtest(df, test_score, selected_threshold, cost_bps)
+    bt = run_score_backtest(
+        df,
+        test_score,
+        selected_threshold,
+        cost_bps,
+        sell_threshold=selected_sell_threshold if strategy_mode == "hysteresis" else None,
+        strategy_mode=strategy_mode,
+    )
 
     clf = model.named_steps["clf"]
     coef = clf.coef_[0]
@@ -614,28 +729,35 @@ def run_meta_model_strategy(
         {"item": "meta_model_status", "value": "model"},
         {"item": "meta_train_rows", "value": len(meta_train)},
         {"item": "meta_validation_rows", "value": len(meta_val)},
-        {"item": "meta_selected_threshold", "value": selected_threshold},
+        {"item": "meta_selected_buy_threshold", "value": selected_threshold},
+        {"item": "meta_selected_sell_threshold", "value": selected_sell_threshold},
+        {"item": "strategy_mode", "value": strategy_mode},
     ]
     for feature, value in zip(META_SCORE_COLS, coef):
         summary_rows.append({"item": f"coef_{feature}", "value": float(value)})
-    return bt, diagnostics(bt), pd.DataFrame(summary_rows), selected_threshold, threshold_table
+    return bt, diagnostics(bt), pd.DataFrame(summary_rows), selected_threshold, selected_sell_threshold, threshold_table
 
 
 def build_strategy_comparison(
     weighted_diagnostics: dict[str, float],
     meta_diagnostics: dict[str, float],
     selected_threshold: float,
+    selected_sell_threshold: float,
     meta_selected_threshold: float,
+    meta_selected_sell_threshold: float,
+    strategy_mode: str,
 ) -> pd.DataFrame:
     rows = []
-    for name, d, threshold in [
-        ("manual_weighted_score", weighted_diagnostics, selected_threshold),
-        ("meta_model_score", meta_diagnostics, meta_selected_threshold),
+    for name, d, buy_threshold, sell_threshold in [
+        ("manual_weighted_score", weighted_diagnostics, selected_threshold, selected_sell_threshold),
+        ("meta_model_score", meta_diagnostics, meta_selected_threshold, meta_selected_sell_threshold),
     ]:
         rows.append(
             {
                 "strategy": name,
-                "selected_threshold": threshold,
+                "strategy_mode": strategy_mode,
+                "selected_buy_threshold": buy_threshold,
+                "selected_sell_threshold": sell_threshold,
                 "strategy_total_return": d["strategy_total_return"],
                 "buy_hold_total_return": d["buy_hold_total_return"],
                 "strategy_max_drawdown": d["strategy_max_drawdown"],
@@ -658,6 +780,7 @@ def run_multi_factor_pipeline(
     val_size: float = 0.2,
     test_size: float = 0.2,
     final_threshold: float = 60.0,
+    sell_threshold: float = 45.0,
     auto_threshold: bool = True,
     threshold_min: float = 40.0,
     threshold_max: float = 80.0,
@@ -666,18 +789,25 @@ def run_multi_factor_pipeline(
     technical_weight: float = 0.2,
     fundamental_weight: float = 0.4,
     chip_weight: float = 0.4,
+    strategy_mode: str = "single_threshold",
 ) -> FactorRunResult:
     notes: list[str] = []
     raw = download_price_data(ticker, start, end)
     df = add_technical_features(raw)
     stock_id = taiwan_stock_id_from_ticker(ticker)
-    if use_finmind and fundamental_df is None:
+    can_use_finmind = is_taiwan_stock_ticker(ticker)
+    if use_finmind and not can_use_finmind:
+        notes.append(
+            f"FinMind auto-fetch skipped for {ticker}. FinMind Taiwan stock data only supports Taiwan stock tickers, "
+            "so uploaded CSV data will be used if provided; otherwise fundamental and chip factors stay neutral."
+        )
+    if use_finmind and can_use_finmind and fundamental_df is None:
         try:
             fundamental_df = fetch_finmind_fundamental_eps(stock_id, start, end, finmind_token)
             notes.append("FinMind fundamental EPS data fetched. EPS is shifted to estimated report availability dates.")
         except Exception as exc:
             notes.append(f"FinMind fundamental fetch failed: {exc}")
-    if use_finmind and chip_df is None:
+    if use_finmind and can_use_finmind and chip_df is None:
         try:
             chip_df = fetch_finmind_chip_data(stock_id, start, end, finmind_token)
             notes.append("FinMind chip data fetched. Institutional net buy is transformed into rolling features.")
@@ -708,18 +838,36 @@ def run_multi_factor_pipeline(
     score_df = combine_scores(score_df, technical_weight, fundamental_weight, chip_weight)
     threshold_table = pd.DataFrame()
     selected_threshold = final_threshold
+    selected_sell_threshold = sell_threshold if strategy_mode == "hysteresis" else final_threshold
     if auto_threshold:
-        selected_threshold, threshold_table = choose_final_threshold(
-            df=df,
-            val_score_df=score_df.loc[val_df.index],
-            threshold_min=threshold_min,
-            threshold_max=threshold_max,
-            threshold_step=threshold_step,
-            cost_bps=cost_bps,
-        )
-    backtest_df = run_score_backtest(df, score_df.loc[test_df.index], selected_threshold, cost_bps)
-    backtest_df = add_feature_percentiles(backtest_df, val_df, FUNDAMENTAL_COLS + CHIP_COLS)
-    meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_threshold_table = run_meta_model_strategy(
+        if strategy_mode == "hysteresis":
+            selected_threshold, selected_sell_threshold, threshold_table = choose_hysteresis_thresholds(
+                df=df,
+                val_score_df=score_df.loc[val_df.index],
+                threshold_min=threshold_min,
+                threshold_max=threshold_max,
+                threshold_step=threshold_step,
+                cost_bps=cost_bps,
+            )
+        else:
+            selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
+                df=df,
+                val_score_df=score_df.loc[val_df.index],
+                threshold_min=threshold_min,
+                threshold_max=threshold_max,
+                threshold_step=threshold_step,
+                cost_bps=cost_bps,
+            )
+    backtest_df = run_score_backtest(
+        df,
+        score_df.loc[test_df.index],
+        selected_threshold,
+        cost_bps,
+        sell_threshold=selected_sell_threshold if strategy_mode == "hysteresis" else None,
+        strategy_mode=strategy_mode,
+    )
+    backtest_df = add_feature_percentiles(backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
+    meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_sell_threshold, meta_threshold_table = run_meta_model_strategy(
         df=df,
         score_df=score_df,
         val_df=val_df,
@@ -728,8 +876,10 @@ def run_multi_factor_pipeline(
         threshold_max=threshold_max,
         threshold_step=threshold_step,
         cost_bps=cost_bps,
+        strategy_mode=strategy_mode,
+        fixed_sell_threshold=sell_threshold,
     )
-    meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, FUNDAMENTAL_COLS + CHIP_COLS)
+    meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     weighted_d = diagnostics(backtest_df)
     return FactorRunResult(
         df=df,
@@ -744,10 +894,21 @@ def run_multi_factor_pipeline(
         meta_backtest_df=meta_backtest_df,
         meta_diagnostics=meta_d,
         meta_model_summary=meta_summary,
-        strategy_comparison=build_strategy_comparison(weighted_d, meta_d, selected_threshold, meta_threshold),
+        strategy_comparison=build_strategy_comparison(
+            weighted_d,
+            meta_d,
+            selected_threshold,
+            selected_sell_threshold,
+            meta_threshold,
+            meta_sell_threshold,
+            strategy_mode,
+        ),
         data_notes=notes,
         selected_threshold=selected_threshold,
+        selected_sell_threshold=selected_sell_threshold,
         threshold_table=threshold_table,
         meta_selected_threshold=meta_threshold,
+        meta_selected_sell_threshold=meta_sell_threshold,
         meta_threshold_table=meta_threshold_table,
+        strategy_mode=strategy_mode,
     )

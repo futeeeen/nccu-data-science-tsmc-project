@@ -29,6 +29,42 @@ streamlit run streamlit_app.py
 
 You will immediately see model comparison, backtest results, and next-day prediction.
 
+## Multi-Factor Strategy App
+This repository also includes a newer multi-factor investment analysis tool in `multi_factor_strategy/`.
+
+Run it from the project root:
+```bash
+pip install pandas numpy yfinance scikit-learn streamlit FinMind
+streamlit run multi_factor_strategy/multi_factor_app.py
+```
+
+The multi-factor app adds:
+- English / Traditional Chinese UI switching
+- Three separate factor models: technical, fundamental, and chip
+- Manual weighted score and second-stage meta model comparison
+- Single-threshold and dual-threshold trading strategy modes
+- Validation-based threshold search
+- Trading cost simulation
+- Factor contribution explanation by date
+- Red / yellow / green feature health indicators based on each feature's meaning
+- Downloadable multi-factor backtest result CSV
+
+### Trading Strategy Modes
+The multi-factor app can switch between two trading rules:
+
+- `Single threshold`: buy or hold when `final_score >= buy_threshold`; otherwise stay in cash.
+- `Dual threshold buffer`: enter only when cash and `final_score >= buy_threshold`; exit only when already holding and `final_score <= sell_threshold`.
+
+The dual-threshold mode reduces frequent whipsaw trades by creating a buffer zone between buy and sell decisions.
+
+### Factor Health Colors
+The Factor Explanation tab uses feature-specific rules instead of simply treating high percentile as good:
+
+- EPS growth, MACD, and institutional net buying are generally better when higher.
+- Short balance increases are treated as worse when higher.
+- RSI is best in a healthy range; very high RSI is marked as overheated.
+- Bias and volume expansion are best when moderate; extreme values are treated as caution signals.
+
 ## What the App Does
 - Downloads OHLCV data from Yahoo Finance (`yfinance`)
 - Builds technical features (MA, RSI, MACD)

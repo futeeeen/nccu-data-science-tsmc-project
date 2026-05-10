@@ -39,6 +39,84 @@ Or from the project root:
 streamlit run multi_factor_strategy/multi_factor_app.py
 ```
 
+## Current App Features
+
+- English / Traditional Chinese UI switching
+- Technical, fundamental, and chip sub-model training status
+- Manual weighted score versus learned meta model score
+- Single-threshold and dual-threshold trading strategy modes
+- Validation-based threshold search
+- Trading cost simulation
+- Factor contribution explanation for any selected test date
+- Feature-specific red / yellow / green signal colors
+- Downloadable backtest result CSV
+
+## Trading Strategy Modes
+
+The app currently supports two buy/sell rules.
+
+### Single Threshold
+
+This is the simpler rule:
+
+```text
+final_score >= buy_threshold -> target_position = 1
+final_score < buy_threshold  -> target_position = 0
+```
+
+It is easy to understand, but it may trade too frequently when the score moves around the threshold.
+
+### Dual Threshold Buffer
+
+This is the recommended default rule:
+
+```text
+When currently in cash:
+  final_score >= buy_threshold -> enter / hold position 1
+
+When already holding:
+  final_score <= sell_threshold -> exit to cash
+  final_score > sell_threshold  -> keep holding
+```
+
+Example:
+
+```text
+buy_threshold = 65
+sell_threshold = 45
+```
+
+If the score falls from 66 to 58, the strategy keeps holding instead of immediately selling. It exits only when the score drops below the sell threshold. This hysteresis band helps reduce whipsaw trades and trading costs.
+
+When auto-search is enabled:
+
+- Single-threshold mode searches one threshold.
+- Dual-threshold mode searches valid `buy_threshold >= sell_threshold` pairs.
+- The best threshold or threshold pair is selected on the validation period.
+- The test period is used only for final out-of-sample reporting.
+
+## Factor Explanation Colors
+
+The Factor Explanation tab shows the reason behind each selected date's score.
+
+Each feature row has:
+
+- `validation_percentile`: where the selected date stands versus the validation-period distribution
+- `direction`: how this feature should be interpreted
+- `signal`: whether the feature currently looks good, neutral, or bad
+- row color: green, light green, gray, yellow, or red
+
+The color logic is feature-specific. A high percentile is not always good.
+
+Examples:
+
+- `eps_growth_yoy`: higher is generally better, so high values are green.
+- `foreign_net_buy_5d`: higher institutional buying is generally better, so high values are green.
+- `short_balance_change_5d`: higher short balance is usually bearish, so high values are red.
+- `rsi_14`: a healthy middle range is best; very high RSI can be marked as overheated.
+- `bias_5` and `bias_20`: moderate positive bias is good, but extreme bias is treated as caution.
+- `vol_chg`: moderate volume expansion is good, but extreme volume spikes are treated as caution.
+
 ## Fundamental CSV Format
 
 The app can fetch EPS from FinMind automatically. It uses `taiwan_stock_financial_statement`, filters `type == "EPS"`, and estimates when the statement becomes available to avoid look-ahead bias:
