@@ -84,13 +84,63 @@ class FactorRunResult:
     strategy_mode: str
 
 
-def download_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+@lru_cache(maxsize=64)
+def fetch_finmind_price_data(stock_id: str, start_date: str, end_date: str, token: str | None = None) -> pd.DataFrame:
+    try:
+        from FinMind.data import DataLoader
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("FinMind is not installed. Run `pip install FinMind`.") from exc
+
+    dl = DataLoader()
+    if token:
+        dl.login_by_token(api_token=token)
+    price = dl.taiwan_stock_daily(stock_id=stock_id, start_date=start_date, end_date=end_date)
+    if price.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    out = price.copy()
+    out["date"] = pd.to_datetime(out["date"])
+    out = out.sort_values("date").set_index("date")
+    out = out.rename(
+        columns={
+            "open": "Open",
+            "max": "High",
+            "min": "Low",
+            "close": "Close",
+            "Trading_Volume": "Volume",
+        }
+    )
+    return out[["Open", "High", "Low", "Close", "Volume"]].apply(pd.to_numeric, errors="coerce").dropna()
+
+
+def download_price_data(ticker: str, start: str, end: str, finmind_token: str | None = None) -> pd.DataFrame:
+    yfinance_error = ""
+    try:
+        df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
+    except Exception as exc:
+        df = pd.DataFrame()
+        yfinance_error = str(exc)
+
+    if df.empty and is_taiwan_stock_ticker(ticker):
+        stock_id = taiwan_stock_id_from_ticker(ticker)
+        fallback = fetch_finmind_price_data(stock_id, start, end, finmind_token)
+        if not fallback.empty:
+            fallback.attrs["price_source"] = "FinMind TaiwanStockPrice"
+            if yfinance_error:
+                fallback.attrs["price_note"] = f"Yahoo Finance price download failed first: {yfinance_error}"
+            else:
+                fallback.attrs["price_note"] = "Yahoo Finance returned 0 rows, so FinMind price data was used."
+            return fallback
+
     if df.empty:
-        raise ValueError(f"Cannot download data for ticker={ticker}.")
+        detail = f" Yahoo Finance error: {yfinance_error}" if yfinance_error else ""
+        raise ValueError(f"Cannot download data for ticker={ticker}.{detail}")
+
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
-    return df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    out = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    out.attrs["price_source"] = "Yahoo Finance"
+    return out
 
 
 def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -795,7 +845,13 @@ def run_multi_factor_pipeline(
     strategy_mode: str = "single_threshold",
 ) -> FactorRunResult:
     notes: list[str] = []
-    raw = download_price_data(ticker, start, end)
+    raw = download_price_data(ticker, start, end, finmind_token)
+    price_source = raw.attrs.get("price_source")
+    price_note = raw.attrs.get("price_note")
+    if price_source:
+        notes.append(f"Price data source: {price_source}.")
+    if price_note:
+        notes.append(str(price_note))
     df = add_technical_features(raw)
     stock_id = taiwan_stock_id_from_ticker(ticker)
     can_use_finmind = is_taiwan_stock_ticker(ticker)
