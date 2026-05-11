@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import streamlit as st
 
@@ -220,6 +222,25 @@ def read_optional_csv(uploaded_file) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
     return pd.read_csv(uploaded_file)
+
+
+def resolve_finmind_token(sidebar_token: str | None) -> tuple[str | None, str]:
+    token = (sidebar_token or "").strip()
+    if token:
+        return token, "sidebar input"
+
+    try:
+        token = str(st.secrets.get("FINMIND_TOKEN", "")).strip()
+    except Exception:
+        token = ""
+    if token:
+        return token, "Streamlit secrets"
+
+    token = os.getenv("FINMIND_TOKEN", "").strip()
+    if token:
+        return token, "environment variable"
+
+    return None, "not configured"
 
 
 def normalize_weights(technical: float, fundamental: float, chip: float) -> tuple[float, float, float]:
@@ -842,6 +863,7 @@ def main() -> None:
         tech_weight, fund_weight, chip_weight = normalize_weights(technical_w, fundamental_w, chip_w)
         fundamental_df = read_optional_csv(fundamental_file)
         chip_df = read_optional_csv(chip_file)
+        resolved_finmind_token, finmind_token_source = resolve_finmind_token(finmind_token)
 
         with st.spinner(tr(lang, "running")):
             result = run_multi_factor_pipeline(
@@ -851,7 +873,7 @@ def main() -> None:
                 fundamental_df=fundamental_df,
                 chip_df=chip_df,
                 use_finmind=use_finmind,
-                finmind_token=finmind_token.strip() or None,
+                finmind_token=resolved_finmind_token,
                 final_threshold=final_threshold,
                 sell_threshold=sell_threshold,
                 auto_threshold=auto_threshold,
@@ -864,6 +886,8 @@ def main() -> None:
                 chip_weight=chip_weight,
                 strategy_mode=strategy_mode,
             )
+        if use_finmind:
+            result.data_notes.insert(0, f"FinMind token source: {finmind_token_source}.")
         st.session_state["multi_factor_result"] = result
         st.session_state["multi_factor_params"] = {
             "ticker": ticker,

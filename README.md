@@ -49,6 +49,14 @@ The multi-factor app adds:
 - Red / yellow / green feature health indicators based on each feature's meaning
 - Downloadable multi-factor backtest result CSV
 
+For Streamlit Cloud deployment, add this secret so FinMind data works reliably:
+
+```toml
+FINMIND_TOKEN = "your_finmind_token"
+```
+
+The app will use the sidebar token first, then Streamlit Cloud `FINMIND_TOKEN`, then the environment variable with the same name.
+
 ### Trading Strategy Modes
 The multi-factor app can switch between two trading rules:
 

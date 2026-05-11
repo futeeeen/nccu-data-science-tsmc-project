@@ -39,6 +39,30 @@ Or from the project root:
 streamlit run multi_factor_strategy/multi_factor_app.py
 ```
 
+## Streamlit Cloud FinMind Token
+
+FinMind can work without a token locally, but Streamlit Cloud runs from shared cloud infrastructure and anonymous API quota can be exhausted quickly. Configure a token in Streamlit Cloud to make the fundamental and chip factors reliable.
+
+In Streamlit Cloud:
+
+```text
+Manage app -> Settings -> Secrets
+```
+
+Add:
+
+```toml
+FINMIND_TOKEN = "your_finmind_token"
+```
+
+The app reads the token in this order:
+
+- Sidebar token input
+- Streamlit Cloud secret `FINMIND_TOKEN`
+- Environment variable `FINMIND_TOKEN`
+
+The Data Notes panel shows the token source and whether FinMind returned data or fell back to neutral scores.
+
 ## Current App Features
 
 - English / Traditional Chinese UI switching

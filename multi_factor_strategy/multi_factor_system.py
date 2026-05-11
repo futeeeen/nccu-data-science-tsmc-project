@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -147,6 +148,7 @@ def estimate_financial_available_date(period_end: pd.Timestamp) -> pd.Timestamp:
     return period_end + pd.Timedelta(days=45)
 
 
+@lru_cache(maxsize=64)
 def fetch_finmind_fundamental_eps(
     stock_id: str, start_date: str, end_date: str, token: str | None = None
 ) -> pd.DataFrame:
@@ -214,6 +216,7 @@ def _extract_margin_short(margin_df: pd.DataFrame) -> pd.DataFrame:
     return out.drop_duplicates("date")
 
 
+@lru_cache(maxsize=64)
 def fetch_finmind_chip_data(
     stock_id: str, start_date: str, end_date: str, token: str | None = None
 ) -> pd.DataFrame:
@@ -804,13 +807,31 @@ def run_multi_factor_pipeline(
     if use_finmind and can_use_finmind and fundamental_df is None:
         try:
             fundamental_df = fetch_finmind_fundamental_eps(stock_id, start, end, finmind_token)
-            notes.append("FinMind fundamental EPS data fetched. EPS is shifted to estimated report availability dates.")
+            if fundamental_df.empty:
+                notes.append(
+                    "FinMind fundamental fetch returned 0 rows. Check token/quota, stock id, and date range; "
+                    "fundamental factor will use a neutral 50 score."
+                )
+            else:
+                notes.append(
+                    f"FinMind fundamental EPS data fetched ({len(fundamental_df)} rows). "
+                    "EPS is shifted to estimated report availability dates."
+                )
         except Exception as exc:
             notes.append(f"FinMind fundamental fetch failed: {exc}")
     if use_finmind and can_use_finmind and chip_df is None:
         try:
             chip_df = fetch_finmind_chip_data(stock_id, start, end, finmind_token)
-            notes.append("FinMind chip data fetched. Institutional net buy is transformed into rolling features.")
+            if chip_df.empty:
+                notes.append(
+                    "FinMind chip fetch returned 0 rows. Check token/quota, stock id, and date range; "
+                    "chip factor will use a neutral 50 score."
+                )
+            else:
+                notes.append(
+                    f"FinMind chip data fetched ({len(chip_df)} rows). "
+                    "Institutional net buy is transformed into rolling features."
+                )
         except Exception as exc:
             notes.append(f"FinMind chip fetch failed: {exc}")
     df, fund_note = merge_fundamental_data(df, fundamental_df)
