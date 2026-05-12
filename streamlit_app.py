@@ -37,6 +37,7 @@ TEXT = {
         "initial_info": "Set parameters in the sidebar and click Run. Both dashboards will appear below after one run.",
         "tab_backtest": "Backtest Dashboard",
         "tab_lifecycle": "Project Lifecycle",
+        "tab_architecture": "Architecture",
         "lifecycle_title": "Data Science Project Lifecycle",
         "lifecycle_caption": "This view maps the final project lifecycle to the concrete outputs produced by this app.",
         "problem": "Problem",
@@ -65,6 +66,16 @@ TEXT = {
         "target_position": "Target Position (Leverage)",
         "download_csv": "Download streamlit_backtest_result.csv",
         "choose_stage4": "Choose Stage 4 to see the full model comparison table used for selection.",
+        "architecture_title": "Interactive Project Architecture",
+        "architecture_caption": "Switch granularity, inspect each module, and connect the graph to what the dashboard produces.",
+        "granularity": "Granularity",
+        "overview_level": "Overview",
+        "detail_level": "Detailed",
+        "inspect_module": "Inspect module",
+        "module_role": "Role",
+        "module_inputs": "Inputs",
+        "module_outputs": "Outputs",
+        "module_evidence": "Evidence in this app",
     },
     "zh": {
         "app_title": "台積電股價方向預測與回測系統",
@@ -75,6 +86,7 @@ TEXT = {
         "initial_info": "請先在左側設定參數並按 Run，執行一次後下方會同時出現兩個 Dashboard。",
         "tab_backtest": "回測 Dashboard",
         "tab_lifecycle": "專案流程",
+        "tab_architecture": "架構探索",
         "lifecycle_title": "資料科學專案生命週期",
         "lifecycle_caption": "此頁把資料科學專案各階段，對應到本系統實際完成的內容與結果。",
         "problem": "問題",
@@ -103,6 +115,16 @@ TEXT = {
         "target_position": "目標部位（槓桿）",
         "download_csv": "下載 streamlit_backtest_result.csv",
         "choose_stage4": "選擇 Stage 4 可查看用於選模的完整模型比較表。",
+        "architecture_title": "互動式專案架構探索",
+        "architecture_caption": "切換架構層級、點選模組，並把資料流連回 dashboard 產出的結果。",
+        "granularity": "架構層級",
+        "overview_level": "總覽",
+        "detail_level": "細節",
+        "inspect_module": "查看模組",
+        "module_role": "角色",
+        "module_inputs": "輸入",
+        "module_outputs": "輸出",
+        "module_evidence": "本工具中的證據",
     },
 }
 
@@ -739,6 +761,210 @@ def render_backtest_dashboard(
     )
 
 
+def architecture_modules(lang: str, result: dict | None = None) -> dict[str, dict[str, str]]:
+    ticker = result["ticker"] if result else "2330.TW"
+    best_name = result["best_name"] if result else "selected best model"
+    if lang == "zh":
+        return {
+            "goal": {
+                "label": "1. 研究目標",
+                "role": "定義問題：預測下一交易日是否上漲，並檢查訊號是否能支援交易策略。",
+                "inputs": "股票代號、日期區間、validation/test 比例、threshold 與交易成本。",
+                "outputs": "target：隔日收盤價是否高於今日收盤價。",
+                "evidence": "Backtest Dashboard 的 Strategy Definition 顯示目前訊號規則與交易成本。",
+            },
+            "data": {
+                "label": "2. 資料取得",
+                "role": "從 Yahoo Finance 下載每日 OHLCV 股價資料。",
+                "inputs": f"ticker={ticker}、start date、end date。",
+                "outputs": "Open、High、Low、Close、Volume。",
+                "evidence": "Data Summary 顯示清理後總資料、train、validation、test 筆數。",
+            },
+            "features": {
+                "label": "3. 特徵工程",
+                "role": "將價格量資料轉成技術指標，讓模型可以學習短期趨勢與動能。",
+                "inputs": "OHLCV 原始資料。",
+                "outputs": "return_1d、ma_ratio、bias_5、bias_20、vol_chg、rsi_14、macd、macd_signal、macd_hist。",
+                "evidence": "Project Lifecycle Stage 2 說明 feature cleaning 與缺值處理。",
+            },
+            "split": {
+                "label": "4. 時間序切分",
+                "role": "依時間順序切成 train / validation / test，避免未來資料洩漏。",
+                "inputs": "完整特徵資料表。",
+                "outputs": "訓練集、驗證集、測試集。",
+                "evidence": "模型只用 train 訓練；validation 用於選模型與 threshold；test 用於最終樣本外報告。",
+            },
+            "models": {
+                "label": "5. 候選模型",
+                "role": "訓練多個模型並比較分類與交易績效。",
+                "inputs": "技術指標特徵與 target。",
+                "outputs": "各模型的 P(up)、分類指標與回測結果。",
+                "evidence": f"Model Comparison 會列出所有候選模型；目前最佳模型為 {best_name}。",
+            },
+            "selection": {
+                "label": "6. 選模與門檻",
+                "role": "用 validation strategy total return 選出最佳模型與 threshold。",
+                "inputs": "validation 預測機率與 threshold 搜尋範圍。",
+                "outputs": "best model、selected threshold。",
+                "evidence": "Threshold Search Result 與 Project Lifecycle Stage 4 顯示實際選模依據。",
+            },
+            "backtest": {
+                "label": "7. 回測策略",
+                "role": "將 P(up) 轉成 target_position，並計算交易成本與策略報酬。",
+                "inputs": "P(up)、threshold、交易成本。",
+                "outputs": "position、strategy_ret、strategy_cum、buy_hold_cum。",
+                "evidence": "Backtest Dashboard 顯示績效、診斷指標與權益曲線。",
+            },
+            "present": {
+                "label": "8. 視覺化與部署",
+                "role": "將結果整理成 dashboard、CSV 與下一交易日預測。",
+                "inputs": "最佳模型、測試集回測、最新特徵。",
+                "outputs": "模型比較、生命週期說明、CSV、P(up)、target position。",
+                "evidence": "Next Trading Day Prediction 與 Download CSV 是最後輸出。",
+            },
+        }
+    return {
+        "goal": {
+            "label": "1. Goal",
+            "role": "Define the problem: predict whether the next trading day will rise and test whether the signal supports a trading strategy.",
+            "inputs": "Ticker, date range, validation/test ratios, threshold, and trading cost.",
+            "outputs": "Target: whether tomorrow's close is above today's close.",
+            "evidence": "Strategy Definition shows the signal rule and trading cost assumption.",
+        },
+        "data": {
+            "label": "2. Data Collection",
+            "role": "Download daily OHLCV price data from Yahoo Finance.",
+            "inputs": f"ticker={ticker}, start date, and end date.",
+            "outputs": "Open, High, Low, Close, and Volume.",
+            "evidence": "Data Summary shows cleaned total, train, validation, and test rows.",
+        },
+        "features": {
+            "label": "3. Feature Engineering",
+            "role": "Convert OHLCV data into technical indicators for short-term trend and momentum learning.",
+            "inputs": "Raw OHLCV data.",
+            "outputs": "return_1d, ma_ratio, bias_5, bias_20, vol_chg, rsi_14, macd, macd_signal, macd_hist.",
+            "evidence": "Project Lifecycle Stage 2 explains feature cleaning and missing-value handling.",
+        },
+        "split": {
+            "label": "4. Time Split",
+            "role": "Split chronologically into train / validation / test to avoid leakage.",
+            "inputs": "Full feature table.",
+            "outputs": "Train, validation, and test splits.",
+            "evidence": "Train fits models; validation selects model and threshold; test reports final out-of-sample results.",
+        },
+        "models": {
+            "label": "5. Candidate Models",
+            "role": "Train multiple models and compare classification and trading performance.",
+            "inputs": "Technical indicator features and target.",
+            "outputs": "P(up), classification metrics, and backtest results for each model.",
+            "evidence": f"Model Comparison lists all candidate models; current best model is {best_name}.",
+        },
+        "selection": {
+            "label": "6. Model & Threshold Selection",
+            "role": "Select the best model and threshold using validation strategy total return.",
+            "inputs": "Validation probabilities and threshold search range.",
+            "outputs": "Best model and selected threshold.",
+            "evidence": "Threshold Search Result and Project Lifecycle Stage 4 show the selection evidence.",
+        },
+        "backtest": {
+            "label": "7. Backtest Strategy",
+            "role": "Convert P(up) into target_position and calculate trading cost and strategy return.",
+            "inputs": "P(up), threshold, and trading cost.",
+            "outputs": "position, strategy_ret, strategy_cum, and buy_hold_cum.",
+            "evidence": "Backtest Dashboard shows performance metrics, diagnostics, and equity curve.",
+        },
+        "present": {
+            "label": "8. Visualization & Deployment",
+            "role": "Package results into dashboards, CSV, and next-day prediction.",
+            "inputs": "Best model, test backtest, and latest feature row.",
+            "outputs": "Model comparison, lifecycle explanation, CSV, P(up), and target position.",
+            "evidence": "Next Trading Day Prediction and Download CSV are final outputs.",
+        },
+    }
+
+
+def architecture_graph(granularity: str, lang: str, result: dict | None = None) -> str:
+    modules = architecture_modules(lang, result)
+    if granularity == "detail":
+        return f"""
+digraph G {{
+  graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.45", ranksep="0.55"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11, color="#64748b", fillcolor="#eff6ff"];
+  edge [color="#64748b", arrowsize=0.8, fontname="Arial", fontsize=10];
+  goal [label="{modules["goal"]["label"]}\\nNext-day direction", fillcolor="#e0f2fe"];
+  yfin [label="Yahoo Finance\\nOHLCV", fillcolor="#f8fafc"];
+  features [label="{modules["features"]["label"]}\\nRSI / MACD / MA", fillcolor="#ecfeff"];
+  split [label="{modules["split"]["label"]}\\nTrain / Validation / Test", fillcolor="#fefce8"];
+  logreg [label="Logistic / PCA", fillcolor="#ede9fe"];
+  forest [label="RandomForest", fillcolor="#ede9fe"];
+  xgb [label="XGBoost optional", fillcolor="#ede9fe"];
+  selection [label="{modules["selection"]["label"]}\\nValidation return", fillcolor="#fdf2f8"];
+  backtest [label="{modules["backtest"]["label"]}\\nDynamic leverage", fillcolor="#fee2e2"];
+  present [label="{modules["present"]["label"]}\\nCharts + CSV + prediction", fillcolor="#dcfce7"];
+  goal -> yfin -> features -> split;
+  split -> logreg -> selection;
+  split -> forest -> selection;
+  split -> xgb -> selection;
+  selection -> backtest -> present;
+}}
+"""
+    return f"""
+digraph G {{
+  graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.5", ranksep="0.7"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=12, color="#64748b", fillcolor="#eff6ff"];
+  edge [color="#64748b", arrowsize=0.8];
+  goal [label="{modules["goal"]["label"]}", fillcolor="#e0f2fe"];
+  data [label="{modules["data"]["label"]}", fillcolor="#f8fafc"];
+  features [label="{modules["features"]["label"]}", fillcolor="#ecfeff"];
+  split [label="{modules["split"]["label"]}", fillcolor="#fefce8"];
+  models [label="{modules["models"]["label"]}", fillcolor="#ede9fe"];
+  selection [label="{modules["selection"]["label"]}", fillcolor="#fdf2f8"];
+  backtest [label="{modules["backtest"]["label"]}", fillcolor="#fee2e2"];
+  present [label="{modules["present"]["label"]}", fillcolor="#dcfce7"];
+  goal -> data -> features -> split -> models -> selection -> backtest -> present;
+}}
+"""
+
+
+def render_architecture_explorer(lang: str, result: dict | None = None) -> None:
+    st.subheader(tr(lang, "architecture_title"))
+    st.caption(tr(lang, "architecture_caption"))
+    level_options = {
+        tr(lang, "overview_level"): "overview",
+        tr(lang, "detail_level"): "detail",
+    }
+    selected_level = st.radio(tr(lang, "granularity"), list(level_options.keys()), horizontal=True)
+    granularity = level_options[selected_level]
+    st.graphviz_chart(architecture_graph(granularity, lang, result), use_container_width=True)
+
+    modules = architecture_modules(lang, result)
+    labels = {info["label"]: key for key, info in modules.items()}
+    selected_label = st.selectbox(tr(lang, "inspect_module"), list(labels.keys()))
+    selected = modules[labels[selected_label]]
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown(f"### {selected['label']}")
+        st.markdown(f"**{tr(lang, 'module_role')}**")
+        st.write(selected["role"])
+        st.markdown(f"**{tr(lang, 'module_inputs')}**")
+        st.write(selected["inputs"])
+    with right:
+        st.markdown("### " + ("Outputs" if lang == "en" else "輸出與證據"))
+        st.markdown(f"**{tr(lang, 'module_outputs')}**")
+        st.write(selected["outputs"])
+        st.markdown(f"**{tr(lang, 'module_evidence')}**")
+        st.write(selected["evidence"])
+
+    if result is not None:
+        st.markdown("### " + ("Live run snapshot" if lang == "en" else "目前執行結果快照"))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(tr(lang, "train_rows"), f"{len(result['train_df']):,}")
+        c2.metric(tr(lang, "validation_rows"), f"{len(result['val_df']):,}")
+        c3.metric(tr(lang, "test_rows"), f"{len(result['test_df']):,}")
+        c4.metric(tr(lang, "best_model"), result["best_name"])
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Stock Backtest Dashboard", layout="wide")
 
@@ -829,9 +1055,12 @@ def main() -> None:
     result = st.session_state.get("dashboard_result")
     if result is None:
         st.info(tr(lang, "initial_info"))
+        render_architecture_explorer(lang)
         return
 
-    tab_backtest, tab_lifecycle = st.tabs([tr(lang, "tab_backtest"), tr(lang, "tab_lifecycle")])
+    tab_backtest, tab_lifecycle, tab_architecture = st.tabs(
+        [tr(lang, "tab_backtest"), tr(lang, "tab_lifecycle"), tr(lang, "tab_architecture")]
+    )
     with tab_backtest:
         render_backtest_dashboard(
             lang=lang,
@@ -867,6 +1096,9 @@ def main() -> None:
             next_prob_up=result["next_prob_up"],
             next_target_position=result["next_target_position"],
         )
+
+    with tab_architecture:
+        render_architecture_explorer(lang, result)
 
 
 if __name__ == "__main__":

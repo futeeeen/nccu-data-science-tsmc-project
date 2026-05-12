@@ -102,7 +102,7 @@ TEXT = {
         "signal_strategy": "Signal table strategy",
         "download": "Download multi_factor_backtest_result.csv",
         "architecture_title": "Interactive Project Architecture",
-        "architecture_caption": "Explore this app like a model viewer: switch granularity, inspect each module, and connect the graph to what the dashboard produces.",
+        "architecture_caption": "Switch granularity, inspect each module, and connect the graph to what the dashboard produces.",
         "granularity": "Granularity",
         "overview_level": "Overview",
         "detail_level": "Detailed",
@@ -111,7 +111,7 @@ TEXT = {
         "module_inputs": "Inputs",
         "module_outputs": "Outputs",
         "module_evidence": "Evidence in this app",
-        "architecture_note": "This is inspired by hfviewer-style architecture exploration, but adapted to this stock-analysis project instead of Hugging Face model internals.",
+        "architecture_note": "This page explains the stock-analysis project architecture.",
         "buy_decision": "BUY / HOLD",
         "cash_decision": "NO BUY / CASH",
         "high": "high",
@@ -897,9 +897,9 @@ digraph G {{
 def render_architecture_explorer(result, lang: str) -> None:
     title = tr(lang, "architecture_title") if lang == "en" else "互動式專案架構探索"
     caption = (
-        tr(lang, "architecture_caption")
+        "Switch granularity, inspect each module, and connect the graph to what the dashboard produces."
         if lang == "en"
-        else "用類似 hfviewer 的方式探索此工具：切換架構層級、點選模組，並把資料流連回 dashboard 產出的結果。"
+        else "切換架構層級、點選模組，並把資料流連回 dashboard 產出的結果。"
     )
     st.subheader(title)
     st.caption(caption)
