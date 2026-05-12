@@ -944,13 +944,6 @@ def render_architecture_explorer(result, lang: str) -> None:
         s3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
         s4.metric("Strategy mode" if lang == "en" else "策略模式", strategy_mode_label(lang, result.strategy_mode))
 
-    st.info(
-        tr(lang, "architecture_note")
-        if lang == "en"
-        else "這個頁面是參考 hfviewer 的架構探索概念，但改成解釋本股票分析專案，而不是 Hugging Face 模型內部結構。"
-    )
-
-
 def main() -> None:
     st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
 
