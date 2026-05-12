@@ -46,6 +46,7 @@ TEXT = {
         "tab_overview": "Overview",
         "tab_compare": "Strategy Comparison",
         "tab_explain": "Factor Explanation",
+        "tab_architecture": "Architecture",
         "tab_signals": "Signals & Download",
         "factor_status": "Factor Model Status",
         "performance": "Performance",
@@ -100,6 +101,17 @@ TEXT = {
         "latest_signals": "Latest Test Signals",
         "signal_strategy": "Signal table strategy",
         "download": "Download multi_factor_backtest_result.csv",
+        "architecture_title": "Interactive Project Architecture",
+        "architecture_caption": "Explore this app like a model viewer: switch granularity, inspect each module, and connect the graph to what the dashboard produces.",
+        "granularity": "Granularity",
+        "overview_level": "Overview",
+        "detail_level": "Detailed",
+        "inspect_module": "Inspect module",
+        "module_role": "Role",
+        "module_inputs": "Inputs",
+        "module_outputs": "Outputs",
+        "module_evidence": "Evidence in this app",
+        "architecture_note": "This is inspired by hfviewer-style architecture exploration, but adapted to this stock-analysis project instead of Hugging Face model internals.",
         "buy_decision": "BUY / HOLD",
         "cash_decision": "NO BUY / CASH",
         "high": "high",
@@ -708,6 +720,237 @@ def render_strategy_comparison(result, lang: str) -> None:
     st.line_chart(comparison_curve, use_container_width=True)
 
 
+def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
+    if lang == "zh":
+        return {
+            "goal": {
+                "label": "1. 研究目標",
+                "role": "定義問題：預測隔日股價方向，並檢查訊號是否能支援交易策略。",
+                "inputs": "股票代號、日期區間、交易成本、策略模式。",
+                "outputs": "target：隔日收盤價是否高於今日收盤價。",
+                "evidence": "Score Design 與 Current Trading Strategy 顯示目前模型目標與交易規則。",
+            },
+            "data": {
+                "label": "2. 資料層",
+                "role": "取得價格、基本面與籌碼面資料。",
+                "inputs": "Yahoo Finance OHLCV、FinMind EPS、三大法人、融資融券，或手動 CSV。",
+                "outputs": "可合併到每日交易日的原始資料表。",
+                "evidence": "Data Notes 會說明哪些資料成功取得、哪些因子因缺資料維持中性 50 分。",
+            },
+            "features": {
+                "label": "3. 特徵工程",
+                "role": "把原始資料轉成模型可學習的技術面、基本面、籌碼面特徵。",
+                "inputs": "價格量資料、EPS、法人買賣超、融資融券餘額。",
+                "outputs": "RSI、MACD、MA ratio、EPS growth、法人 rolling net buy 等特徵。",
+                "evidence": "Factor Explanation 的 driver tables 顯示各特徵目前狀態與紅黃綠燈。",
+            },
+            "split": {
+                "label": "4. 時間序切分",
+                "role": "避免資料外洩，依時間順序切成 train / validation / test。",
+                "inputs": "完整特徵資料表。",
+                "outputs": "訓練集、驗證集、測試集。",
+                "evidence": "模型只用 train 學習；threshold 只用 validation 搜尋；test 只做最終報告。",
+            },
+            "submodels": {
+                "label": "5. 三個子模型",
+                "role": "分別訓練 technical、fundamental、chip 模型。",
+                "inputs": "各因子自己的特徵欄位與 target。",
+                "outputs": "technical_score、fundamental_score、chip_score。",
+                "evidence": "Overview 的 Factor Model Status 顯示每個因子是 model、neutral 或資料不足。",
+            },
+            "score": {
+                "label": "6. 分數合成",
+                "role": "比較人工權重與 Meta model 兩種合成方式。",
+                "inputs": "三個校正後的 0-100 因子分數。",
+                "outputs": "Manual weighted final_score 與 Meta model final_score。",
+                "evidence": "Strategy Comparison 比較 Manual Weighted Score 和 Meta Model Score。",
+            },
+            "strategy": {
+                "label": "7. 交易策略",
+                "role": "把 final_score 轉成 target_position。",
+                "inputs": "final_score、buy_threshold、sell_threshold、策略模式。",
+                "outputs": "target_position、position、交易成本、策略報酬。",
+                "evidence": "Current Trading Strategy 顯示單一門檻或雙門檻緩衝策略。",
+            },
+            "dashboard": {
+                "label": "8. 視覺化與下載",
+                "role": "把模型結果轉成可解釋的 dashboard 與 CSV。",
+                "inputs": "回測結果、因子分數、交易部位、績效指標。",
+                "outputs": "績效圖、因子解釋、紅黃綠燈、下載檔。",
+                "evidence": "Overview、Factor Explanation、Signals & Download 都是最終展示層。",
+            },
+        }
+    return {
+        "goal": {
+            "label": "1. Goal",
+            "role": "Define the problem: predict next-day direction and test whether signals can support a trading strategy.",
+            "inputs": "Ticker, date range, trading cost, and strategy mode.",
+            "outputs": "Target: whether tomorrow's close is above today's close.",
+            "evidence": "Score Design and Current Trading Strategy show the modeling goal and trading rule.",
+        },
+        "data": {
+            "label": "2. Data Layer",
+            "role": "Fetch price, fundamental, and chip data.",
+            "inputs": "Yahoo Finance OHLCV, FinMind EPS, institutional flows, margin/short data, or uploaded CSV.",
+            "outputs": "Raw daily-aligned data ready for feature engineering.",
+            "evidence": "Data Notes explain which sources loaded and which missing factors stay neutral at 50.",
+        },
+        "features": {
+            "label": "3. Feature Engineering",
+            "role": "Transform raw data into technical, fundamental, and chip model features.",
+            "inputs": "Price/volume, EPS, institutional net buy, margin/short balances.",
+            "outputs": "RSI, MACD, MA ratio, EPS growth, rolling institutional net buy, and related features.",
+            "evidence": "Factor Explanation driver tables show feature values and red/yellow/green health colors.",
+        },
+        "split": {
+            "label": "4. Time Split",
+            "role": "Avoid leakage by splitting data chronologically into train / validation / test.",
+            "inputs": "Full feature table.",
+            "outputs": "Train, validation, and test splits.",
+            "evidence": "Train fits models; validation searches thresholds; test reports final out-of-sample results.",
+        },
+        "submodels": {
+            "label": "5. Factor Submodels",
+            "role": "Train technical, fundamental, and chip models separately.",
+            "inputs": "Each factor's feature columns and the target.",
+            "outputs": "technical_score, fundamental_score, and chip_score.",
+            "evidence": "Overview Factor Model Status shows whether each factor is model, neutral, or insufficient.",
+        },
+        "score": {
+            "label": "6. Score Fusion",
+            "role": "Compare manual weighting against a learned meta model.",
+            "inputs": "Three calibrated 0-100 factor scores.",
+            "outputs": "Manual weighted final_score and Meta model final_score.",
+            "evidence": "Strategy Comparison compares Manual Weighted Score and Meta Model Score.",
+        },
+        "strategy": {
+            "label": "7. Trading Strategy",
+            "role": "Convert final_score into target_position.",
+            "inputs": "final_score, buy_threshold, sell_threshold, and strategy mode.",
+            "outputs": "target_position, executed position, trading cost, and strategy return.",
+            "evidence": "Current Trading Strategy shows single-threshold or dual-threshold buffer logic.",
+        },
+        "dashboard": {
+            "label": "8. Visualization & Download",
+            "role": "Turn model outputs into an explainable dashboard and CSV.",
+            "inputs": "Backtest results, factor scores, positions, and performance metrics.",
+            "outputs": "Performance charts, factor explanations, health colors, and downloadable files.",
+            "evidence": "Overview, Factor Explanation, and Signals & Download are the final presentation layer.",
+        },
+    }
+
+
+def architecture_graph(granularity: str, lang: str) -> str:
+    modules = architecture_modules(lang)
+    detailed = granularity == "detail"
+    if detailed:
+        return f"""
+digraph G {{
+  graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.45", ranksep="0.55"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11, color="#64748b", fillcolor="#eff6ff"];
+  edge [color="#64748b", arrowsize=0.8, fontname="Arial", fontsize=10];
+  goal [label="{modules["goal"]["label"]}\\nNext-day direction", fillcolor="#e0f2fe"];
+  price [label="Yahoo Finance\\nOHLCV", fillcolor="#f8fafc"];
+  finmind [label="FinMind / CSV\\nEPS + Chip", fillcolor="#f8fafc"];
+  tech [label="Technical features\\nRSI / MACD / MA", fillcolor="#ecfeff"];
+  fund [label="Fundamental features\\nEPS growth", fillcolor="#f0fdf4"];
+  chip [label="Chip features\\nInstitutional flow", fillcolor="#fff7ed"];
+  split [label="{modules["split"]["label"]}\\nTrain / Validation / Test", fillcolor="#fefce8"];
+  submodels [label="{modules["submodels"]["label"]}\\n3 calibrated scores", fillcolor="#ede9fe"];
+  manual [label="Manual weighted score\\nUser weights", fillcolor="#fdf2f8"];
+  meta [label="Meta model score\\nLearned relationship", fillcolor="#fdf2f8"];
+  strategy [label="{modules["strategy"]["label"]}\\nSingle or dual threshold", fillcolor="#fee2e2"];
+  dashboard [label="{modules["dashboard"]["label"]}\\nCharts + explanations + CSV", fillcolor="#dcfce7"];
+  goal -> price;
+  goal -> finmind;
+  price -> tech;
+  finmind -> fund;
+  finmind -> chip;
+  tech -> split;
+  fund -> split;
+  chip -> split;
+  split -> submodels;
+  submodels -> manual;
+  submodels -> meta;
+  manual -> strategy;
+  meta -> strategy;
+  strategy -> dashboard;
+}}
+"""
+    return f"""
+digraph G {{
+  graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.5", ranksep="0.7"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=12, color="#64748b", fillcolor="#eff6ff"];
+  edge [color="#64748b", arrowsize=0.8];
+  goal [label="{modules["goal"]["label"]}", fillcolor="#e0f2fe"];
+  data [label="{modules["data"]["label"]}", fillcolor="#f8fafc"];
+  features [label="{modules["features"]["label"]}", fillcolor="#ecfeff"];
+  submodels [label="{modules["submodels"]["label"]}", fillcolor="#ede9fe"];
+  score [label="{modules["score"]["label"]}", fillcolor="#fdf2f8"];
+  strategy [label="{modules["strategy"]["label"]}", fillcolor="#fee2e2"];
+  dashboard [label="{modules["dashboard"]["label"]}", fillcolor="#dcfce7"];
+  goal -> data -> features -> submodels -> score -> strategy -> dashboard;
+}}
+"""
+
+
+def render_architecture_explorer(result, lang: str) -> None:
+    title = tr(lang, "architecture_title") if lang == "en" else "互動式專案架構探索"
+    caption = (
+        tr(lang, "architecture_caption")
+        if lang == "en"
+        else "用類似 hfviewer 的方式探索此工具：切換架構層級、點選模組，並把資料流連回 dashboard 產出的結果。"
+    )
+    st.subheader(title)
+    st.caption(caption)
+    levels = {
+        tr(lang, "overview_level") if lang == "en" else "總覽": "overview",
+        tr(lang, "detail_level") if lang == "en" else "細節": "detail",
+    }
+    selected_level = st.radio(
+        tr(lang, "granularity") if lang == "en" else "架構層級",
+        list(levels.keys()),
+        horizontal=True,
+    )
+    granularity = levels[selected_level]
+    st.graphviz_chart(architecture_graph(granularity, lang), use_container_width=True)
+
+    modules = architecture_modules(lang)
+    labels = {info["label"]: key for key, info in modules.items()}
+    selected_label = st.selectbox(
+        tr(lang, "inspect_module") if lang == "en" else "查看模組",
+        list(labels.keys()),
+    )
+    selected = modules[labels[selected_label]]
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"### {selected['label']}")
+        st.markdown(f"**{tr(lang, 'module_role') if lang == 'en' else '角色'}**")
+        st.write(selected["role"])
+        st.markdown(f"**{tr(lang, 'module_inputs') if lang == 'en' else '輸入'}**")
+        st.write(selected["inputs"])
+    with c2:
+        st.markdown("### " + ("Outputs" if lang == "en" else "輸出與證據"))
+        st.markdown(f"**{tr(lang, 'module_outputs') if lang == 'en' else '輸出'}**")
+        st.write(selected["outputs"])
+        st.markdown(f"**{tr(lang, 'module_evidence') if lang == 'en' else '本工具中的證據'}**")
+        st.write(selected["evidence"])
+
+    if result is not None:
+        st.markdown("### " + ("Live run snapshot" if lang == "en" else "目前執行結果快照"))
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Train rows" if lang == "en" else "訓練筆數", f"{len(result.train_df):,}")
+        s2.metric("Validation rows" if lang == "en" else "驗證筆數", f"{len(result.val_df):,}")
+        s3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
+        s4.metric("Strategy mode" if lang == "en" else "策略模式", strategy_mode_label(lang, result.strategy_mode))
+
+    st.info(
+        tr(lang, "architecture_note")
+        if lang == "en"
+        else "這個頁面是參考 hfviewer 的架構探索概念，但改成解釋本股票分析專案，而不是 Hugging Face 模型內部結構。"
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
 
@@ -904,6 +1147,7 @@ def main() -> None:
     result = st.session_state.get("multi_factor_result")
     if result is None:
         st.info(tr(lang, "initial_info"))
+        render_architecture_explorer(None, lang)
         return
 
     params = st.session_state.get("multi_factor_params", {})
@@ -927,8 +1171,14 @@ def main() -> None:
             else:
                 st.success(display_note)
 
-    tab_overview, tab_compare, tab_explain, tab_signals = st.tabs(
-        [tr(lang, "tab_overview"), tr(lang, "tab_compare"), tr(lang, "tab_explain"), tr(lang, "tab_signals")]
+    tab_overview, tab_compare, tab_explain, tab_architecture, tab_signals = st.tabs(
+        [
+            tr(lang, "tab_overview"),
+            tr(lang, "tab_compare"),
+            tr(lang, "tab_explain"),
+            tr(lang, "tab_architecture"),
+            tr(lang, "tab_signals"),
+        ]
     )
 
     with tab_overview:
@@ -994,6 +1244,9 @@ def main() -> None:
 
     with tab_explain:
         render_factor_explanation(result, lang)
+
+    with tab_architecture:
+        render_architecture_explorer(result, lang)
 
     with tab_signals:
         st.subheader(tr(lang, "latest_signals"))
