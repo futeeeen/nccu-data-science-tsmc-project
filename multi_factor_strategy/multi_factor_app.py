@@ -434,6 +434,120 @@ def describe_signal_quality(score: float, lang: str = "en") -> str:
     return "Poor" if lang == "en" else "不佳"
 
 
+FEATURE_DEFINITIONS = {
+    "return_1d": {
+        "zh": "一日報酬率：今日收盤價相對前一交易日的漲跌幅，用來捕捉最近價格動能。",
+        "en": "One-day return: today's close versus the previous trading day's close. It captures recent price momentum.",
+    },
+    "ma_ratio": {
+        "zh": "短長均線比：5 日均線除以 20 日均線。大於 1 代表短期價格相對強於中期趨勢。",
+        "en": "Moving-average ratio: 5-day MA divided by 20-day MA. Above 1 means short-term price is stronger than the medium-term trend.",
+    },
+    "bias_5": {
+        "zh": "5 日乖離率：收盤價相對 5 日均線的偏離程度。正值代表價格高於短期均線。",
+        "en": "5-day bias: close price deviation from the 5-day moving average. Positive values mean price is above the short-term average.",
+    },
+    "bias_20": {
+        "zh": "20 日乖離率：收盤價相對 20 日均線的偏離程度，用來觀察中期過熱或轉弱。",
+        "en": "20-day bias: close price deviation from the 20-day moving average. It helps identify medium-term overheating or weakness.",
+    },
+    "vol_chg": {
+        "zh": "成交量變化率：今日成交量相對前一交易日的變化。量增常代表市場關注度提升。",
+        "en": "Volume change: today's volume versus the previous trading day's volume. Rising volume often means stronger market attention.",
+    },
+    "rsi_14": {
+        "zh": "14 日 RSI：衡量近期上漲與下跌力道的相對強弱指標。過高可能過熱，過低可能超賣。",
+        "en": "14-day RSI: relative strength of recent gains versus losses. Very high values may be overheated; very low values may be oversold.",
+    },
+    "macd": {
+        "zh": "MACD：短期與長期 EMA 的差距，本系統會除以收盤價做標準化。正值通常代表偏多動能。",
+        "en": "MACD: difference between short-term and long-term EMA, normalized by close price here. Positive values usually indicate bullish momentum.",
+    },
+    "macd_signal": {
+        "zh": "MACD 訊號線：MACD 的平滑均線，用來判斷 MACD 動能是否延續或轉弱。",
+        "en": "MACD signal line: smoothed average of MACD, used to judge whether MACD momentum is continuing or weakening.",
+    },
+    "macd_hist": {
+        "zh": "MACD 柱狀體：MACD 減訊號線。正值且擴大通常代表上漲動能增強。",
+        "en": "MACD histogram: MACD minus signal line. Positive and rising values usually mean strengthening upward momentum.",
+    },
+    "eps": {
+        "zh": "EPS：每股盈餘，代表公司每一股能分配到的獲利，是基本面獲利能力指標。",
+        "en": "EPS: earnings per share. It measures profit attributable to each share and represents fundamental profitability.",
+    },
+    "eps_growth_yoy": {
+        "zh": "EPS 年增率：本期 EPS 相對去年同期的成長率，用來觀察獲利是否長期改善。",
+        "en": "EPS YoY growth: current EPS compared with the same period last year. It shows whether profitability is improving over the longer term.",
+    },
+    "eps_growth_qoq": {
+        "zh": "EPS 季增率：本期 EPS 相對上一季的成長率，用來觀察近期獲利動能。",
+        "en": "EPS QoQ growth: current EPS compared with the previous quarter. It captures near-term earnings momentum.",
+    },
+    "foreign_net_buy_5d": {
+        "zh": "外資 5 日買賣超：外資近 5 個交易日買進減賣出的合計。正值代表外資偏買。",
+        "en": "Foreign investors 5-day net buy: buy minus sell over the last 5 trading days. Positive means foreign investors are net buyers.",
+    },
+    "investment_trust_net_buy_5d": {
+        "zh": "投信 5 日買賣超：投信近 5 個交易日買進減賣出的合計。常用來觀察本土法人態度。",
+        "en": "Investment trust 5-day net buy: buy minus sell over the last 5 trading days. It reflects local institutional positioning.",
+    },
+    "dealer_net_buy_5d": {
+        "zh": "自營商 5 日買賣超：自營商近 5 個交易日買進減賣出的合計。",
+        "en": "Dealer 5-day net buy: dealer buy minus sell over the last 5 trading days.",
+    },
+    "total_institutional_net_buy_5d": {
+        "zh": "三大法人 5 日買賣超：外資、投信、自營商近 5 日買賣超合計。",
+        "en": "All institutions 5-day net buy: combined net buy of foreign investors, investment trusts, and dealers over 5 days.",
+    },
+    "total_institutional_net_buy_20d": {
+        "zh": "三大法人 20 日買賣超：外資、投信、自營商近 20 日買賣超合計，用來看較長期籌碼方向。",
+        "en": "All institutions 20-day net buy: combined institutional net buy over 20 days, useful for longer-term chip direction.",
+    },
+    "foreign_net_buy_5d_ratio": {
+        "zh": "外資 5 日買賣超占量比：外資 5 日買賣超除以近 5 日成交量，避免只看絕對張數。",
+        "en": "Foreign 5-day net-buy ratio: foreign net buy divided by 5-day volume, scaling institutional buying by trading activity.",
+    },
+    "investment_trust_net_buy_5d_ratio": {
+        "zh": "投信 5 日買賣超占量比：投信 5 日買賣超除以近 5 日成交量。",
+        "en": "Investment trust 5-day net-buy ratio: investment trust net buy divided by 5-day volume.",
+    },
+    "dealer_net_buy_5d_ratio": {
+        "zh": "自營商 5 日買賣超占量比：自營商 5 日買賣超除以近 5 日成交量。",
+        "en": "Dealer 5-day net-buy ratio: dealer net buy divided by 5-day volume.",
+    },
+    "total_institutional_net_buy_5d_ratio": {
+        "zh": "三大法人 5 日買賣超占量比：三大法人 5 日買賣超除以近 5 日成交量。",
+        "en": "All institutions 5-day net-buy ratio: total institutional net buy divided by 5-day volume.",
+    },
+    "foreign_consecutive_buy_days": {
+        "zh": "外資連續買超天數：外資連續呈現淨買超的交易日數。",
+        "en": "Foreign consecutive buy days: number of consecutive trading days where foreign investors are net buyers.",
+    },
+    "investment_trust_consecutive_buy_days": {
+        "zh": "投信連續買超天數：投信連續呈現淨買超的交易日數。",
+        "en": "Investment trust consecutive buy days: number of consecutive trading days where investment trusts are net buyers.",
+    },
+    "margin_balance_change_5d": {
+        "zh": "融資餘額 5 日變化：近 5 日融資餘額變化。融資增加常代表散戶槓桿買盤增加。",
+        "en": "5-day margin balance change: change in margin financing balance over 5 days. Rising margin can imply more leveraged retail buying.",
+    },
+    "short_balance_change_5d": {
+        "zh": "融券餘額 5 日變化：近 5 日融券餘額變化。融券增加常代表放空力道上升。",
+        "en": "5-day short balance change: change in short-selling balance over 5 days. Rising short balance often means stronger bearish pressure.",
+    },
+}
+
+
+def feature_definition(feature: str, lang: str = "en") -> str:
+    item = FEATURE_DEFINITIONS.get(feature, {})
+    return item.get(lang) or item.get("en") or "Definition not available."
+
+
+def feature_short_definition(feature: str, lang: str = "en") -> str:
+    definition = feature_definition(feature, lang)
+    return definition.split("。")[0] if lang == "zh" else definition.split(".")[0] + "."
+
+
 def style_factor_signal(row: pd.Series) -> list[str]:
     score = row.get("quality_score", row.get("validation_percentile", 50))
     if pd.isna(score):
@@ -460,7 +574,16 @@ def styled_factor_table(table: pd.DataFrame):
 
 
 def factor_explanation_table(row: pd.Series, feature_cols: list[str], lang: str = "en") -> pd.DataFrame:
-    columns = ["feature", "value", "validation_percentile", "direction", "signal", "interpretation", "quality_score"]
+    columns = [
+        "feature",
+        "definition",
+        "value",
+        "validation_percentile",
+        "direction",
+        "signal",
+        "interpretation",
+        "quality_score",
+    ]
     records = []
     for col in feature_cols:
         pct_col = f"{col}_pct_rank"
@@ -471,6 +594,7 @@ def factor_explanation_table(row: pd.Series, feature_cols: list[str], lang: str 
             records.append(
                 {
                     "feature": col,
+                    "definition": feature_short_definition(col, lang),
                     "value": value,
                     "validation_percentile": percentile,
                     "direction": direction_text(col, lang),
@@ -482,6 +606,13 @@ def factor_explanation_table(row: pd.Series, feature_cols: list[str], lang: str 
     if not records:
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(records, columns=columns).sort_values("quality_score", ascending=False)
+
+
+def render_feature_glossary(features: list[str], lang: str) -> None:
+    title = "指標定義" if lang == "zh" else "Feature glossary"
+    with st.expander(title, expanded=False):
+        for feature in features:
+            st.markdown(f"**`{feature}`**  \n{feature_definition(feature, lang)}")
 
 
 def contribution_value(row: pd.Series, col: str) -> float:
@@ -630,7 +761,12 @@ def render_factor_explanation(result, lang: str) -> None:
                 styled_factor_table(t_table),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "feature": st.column_config.TextColumn("feature", help="Feature name / 指標名稱"),
+                    "definition": st.column_config.TextColumn("definition", help="Short definition / 指標短定義", width="medium"),
+                },
             )
+            render_feature_glossary(technical_features, lang)
     with f_col:
         st.markdown(f"### {tr(lang, 'fundamental_drivers')}")
         f_table = factor_explanation_table(row, fundamental_features, lang)
@@ -641,7 +777,12 @@ def render_factor_explanation(result, lang: str) -> None:
                 styled_factor_table(f_table),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "feature": st.column_config.TextColumn("feature", help="Feature name / 指標名稱"),
+                    "definition": st.column_config.TextColumn("definition", help="Short definition / 指標短定義", width="medium"),
+                },
             )
+            render_feature_glossary(fundamental_features, lang)
     with c_col:
         st.markdown(f"### {tr(lang, 'chip_drivers')}")
         c_table = factor_explanation_table(row, chip_features, lang)
@@ -652,7 +793,12 @@ def render_factor_explanation(result, lang: str) -> None:
                 styled_factor_table(c_table),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "feature": st.column_config.TextColumn("feature", help="Feature name / 指標名稱"),
+                    "definition": st.column_config.TextColumn("definition", help="Short definition / 指標短定義", width="medium"),
+                },
             )
+            render_feature_glossary(chip_features, lang)
 
     st.subheader(tr(lang, "contribution_over_time"))
     chart_cols = ["fundamental_contribution", "chip_contribution", "final_score"]
