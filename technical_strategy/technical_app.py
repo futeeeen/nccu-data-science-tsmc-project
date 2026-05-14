@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
-from tsmc_stock_system import (
+from technical_system import (
     add_indicators,
     download_data,
     get_models,

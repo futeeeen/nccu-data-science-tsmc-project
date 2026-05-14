@@ -1,53 +1,89 @@
-﻿# TSMC Stock Prediction and Backtesting System
+# TSMC Stock Prediction and Backtesting System
 
-This project predicts next-day TSMC stock direction and backtests a trading strategy based on model signals.
+This project contains three strategy versions for TSMC stock prediction and backtesting.
+
+## Project Layout
+
+| Version | Path | Purpose | Run command |
+| --- | --- | --- | --- |
+| Technical baseline | `technical_strategy/` | Technical indicators only, multi-model comparison, baseline backtest | `streamlit run technical_strategy/technical_app.py` |
+| Multi-factor strategy | `multi_factor_strategy/` | Technical + fundamental + chip factors, weighted score and meta model | `streamlit run multi_factor_strategy/multi_factor_app.py` |
+| Triple-barrier experiment | `triple_barrier_strategy/` | Experimental copy for Triple Barrier Labeling and wave-oriented targets | `streamlit run triple_barrier_strategy/triple_barrier_app.py` |
+
+See `PROJECT_STRUCTURE.md` for the full folder map.
 
 ## Quick Start
-Use this section if this is your first time running the project.
 
-1. Clone the repository and enter the folder
+1. Clone the repository and enter the folder.
+
 ```bash
 git clone https://github.com/futeeeen/nccu-data-science-tsmc-project.git
 cd nccu-data-science-tsmc-project
 ```
 
-2. Install dependencies
+2. Install dependencies.
+
 ```bash
-pip install pandas numpy yfinance scikit-learn streamlit
+pip install -r requirements.txt
 ```
 
-3. Launch the Streamlit app
+3. Run one strategy app.
+
 ```bash
-streamlit run streamlit_app.py
+streamlit run technical_strategy/technical_app.py
 ```
 
-4. Open the browser page shown by Streamlit and run
-- Keep `Ticker` as `2330.TW` (or change it)
-- Set `Start date` and `End date`
-- Set `Validation ratio`, `Test ratio`, and `Threshold`
-- Click `Run`
-
-You will immediately see model comparison, backtest results, and next-day prediction.
-
-## Multi-Factor Strategy App
-This repository also includes a newer multi-factor investment analysis tool in `multi_factor_strategy/`.
-
-Run it from the project root:
 ```bash
-pip install pandas numpy yfinance scikit-learn streamlit FinMind
 streamlit run multi_factor_strategy/multi_factor_app.py
 ```
 
-The multi-factor app adds:
-- English / Traditional Chinese UI switching
-- Three separate factor models: technical, fundamental, and chip
-- Manual weighted score and second-stage meta model comparison
-- Single-threshold and dual-threshold trading strategy modes
-- Validation-based threshold search
-- Trading cost simulation
+```bash
+streamlit run triple_barrier_strategy/triple_barrier_app.py
+```
+
+## Technical Strategy
+
+Path:
+
+```text
+technical_strategy/
+```
+
+Purpose:
+
+- Technical indicators only
+- Multi-model comparison
+- Train / validation / test split by time order
+- Backtest model signals against Buy & Hold
+
+Main files:
+
+- `technical_strategy/technical_system.py`
+- `technical_strategy/technical_app.py`
+
+## Multi-Factor Strategy
+
+Path:
+
+```text
+multi_factor_strategy/
+```
+
+Purpose:
+
+- Technical factor
+- Fundamental factor
+- Chip factor
+- Manual weighted score
+- Second-stage meta model comparison
 - Factor contribution explanation by date
-- Red / yellow / green feature health indicators based on each feature's meaning
-- Downloadable multi-factor backtest result CSV
+
+Main files:
+
+- `multi_factor_strategy/multi_factor_system.py`
+- `multi_factor_strategy/multi_factor_app.py`
+
+### FinMind Token
 
 For Streamlit Cloud deployment, add this secret so FinMind data works reliably:
 
@@ -55,65 +91,53 @@ For Streamlit Cloud deployment, add this secret so FinMind data works reliably:
 FINMIND_TOKEN = "your_finmind_token"
 ```
 
-The app will use the sidebar token first, then Streamlit Cloud `FINMIND_TOKEN`, then the environment variable with the same name.
+The app reads the token in this order:
 
-### Trading Strategy Modes
-The multi-factor app can switch between two trading rules:
+- Sidebar token input
+- Streamlit Cloud secret `FINMIND_TOKEN`
+- Environment variable `FINMIND_TOKEN`
 
-- `Single threshold`: buy or hold when `final_score >= buy_threshold`; otherwise stay in cash.
-- `Dual threshold buffer`: enter only when cash and `final_score >= buy_threshold`; exit only when already holding and `final_score <= sell_threshold`.
+## Triple Barrier Strategy
 
-The dual-threshold mode reduces frequent whipsaw trades by creating a buffer zone between buy and sell decisions.
+Path:
 
-### Factor Health Colors
-The Factor Explanation tab uses feature-specific rules instead of simply treating high percentile as good:
-
-- EPS growth, MACD, and institutional net buying are generally better when higher.
-- Short balance increases are treated as worse when higher.
-- RSI is best in a healthy range; very high RSI is marked as overheated.
-- Bias and volume expansion are best when moderate; extreme values are treated as caution signals.
-
-## What the App Does
-- Downloads OHLCV data from Yahoo Finance (`yfinance`)
-- Builds technical features (MA, RSI, MACD)
-- Splits data into `train / validation / test` by time order
-- Trains models only on `train`
-- Selects the best model by validation strategy return
-- Reports final performance on `test`
-- Generates next trading day prediction (`P(up)` and signal)
-
-## Main Files
-- `tsmc_stock_system.py`: core training, evaluation, and backtesting pipeline
-- `streamlit_app.py`: interactive dashboard for running the full flow
-- `backtest_result.csv`: script backtest output
-- `streamlit_backtest_result.csv`: Streamlit test backtest output
-
-## Optional: Run Script Directly
-```bash
-python tsmc_stock_system.py
+```text
+triple_barrier_strategy/
 ```
 
-## Streamlit Output
-The dashboard includes:
-- Classification metrics (accuracy, precision, recall, F1)
-- Strategy metrics (return, max drawdown, Sharpe)
-- Strategy vs buy-and-hold equity curve
-- Signal table and downloadable CSV
-- Next trading day prediction from the trained best model
+Purpose:
 
-## CSV Columns (`streamlit_backtest_result.csv`)
-- `Close`: close price
-- `pred_prob_up`: predicted probability of up move
-- `pred_up`: binary signal from threshold
-- `position`: executed position (signal shifted by one day)
-- `asset_ret`: daily asset return
-- `strategy_ret`: daily strategy return
-- `buy_hold_ret`: daily buy-and-hold return
-- `strategy_cum`: cumulative strategy curve
-- `buy_hold_cum`: cumulative buy-and-hold curve
+- Experimental version copied from the multi-factor strategy
+- Reserved for Triple Barrier Labeling
+- Intended to replace next-day direction labels with wave-oriented labels
 
-## Optional Dependency
-Install XGBoost model support:
-```bash
-pip install xgboost
+Planned target:
+
+```text
++1: take-profit barrier is hit first
+ 0: neither barrier is hit before max holding period
+-1: stop-loss barrier is hit first
+```
+
+Main files:
+
+- `triple_barrier_strategy/triple_barrier_system.py`
+- `triple_barrier_strategy/triple_barrier_app.py`
+
+## Local Secrets
+
+Local secrets should stay in:
+
+```text
+.streamlit/secrets.toml
+```
+
+This file is ignored by Git and must not be pushed.
+
+## Original Project PDF
+
+The original project specification is kept at the root:
+
+```text
+資科_台積電股票價格預測與交易策略分析系統.pdf
 ```
