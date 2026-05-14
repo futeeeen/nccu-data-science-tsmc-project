@@ -35,6 +35,10 @@ TEXT = {
         "threshold_max": "Threshold search max",
         "threshold_step": "Threshold search step",
         "cost_bps": "Trading cost (bps per position change)",
+        "barrier_settings": "Triple Barrier Labeling",
+        "take_profit_pct": "Take-profit barrier (%)",
+        "stop_loss_pct": "Stop-loss barrier (%)",
+        "max_holding_days": "Vertical barrier (trading days)",
         "run": "Run multi-factor analysis",
         "score_design": "Score Design",
         "data_source": "Data Source",
@@ -146,6 +150,10 @@ TEXT = {
         "threshold_max": "門檻搜尋最大值",
         "threshold_step": "門檻搜尋間距",
         "cost_bps": "交易成本（每次部位變動 bps）",
+        "barrier_settings": "Triple Barrier 標籤設定",
+        "take_profit_pct": "停利障礙（%）",
+        "stop_loss_pct": "停損障礙（%）",
+        "max_holding_days": "垂直時間障礙（交易日）",
         "run": "執行多因子分析",
         "score_design": "分數設計",
         "data_source": "資料來源",
@@ -1173,6 +1181,11 @@ def main() -> None:
             disabled=not auto_threshold,
         )
         cost_bps = st.number_input(tr(lang, "cost_bps"), 0.0, 100.0, 10.0, 1.0)
+
+        st.header(tr(lang, "barrier_settings"))
+        take_profit_pct = st.number_input(tr(lang, "take_profit_pct"), 1.0, 50.0, 8.0, 0.5)
+        stop_loss_pct = st.number_input(tr(lang, "stop_loss_pct"), 1.0, 50.0, 5.0, 0.5)
+        max_holding_days = st.number_input(tr(lang, "max_holding_days"), 3, 120, 20, 1)
         run = st.button(tr(lang, "run"), type="primary")
 
     st.title(tr(lang, "app_title"))
@@ -1267,6 +1280,9 @@ def main() -> None:
                 fundamental_weight=fund_weight,
                 chip_weight=chip_weight,
                 strategy_mode=strategy_mode,
+                take_profit_pct=take_profit_pct / 100.0,
+                stop_loss_pct=stop_loss_pct / 100.0,
+                max_holding_days=int(max_holding_days),
             )
         if use_finmind:
             result.data_notes.insert(0, f"FinMind token source: {finmind_token_source}.")
@@ -1281,6 +1297,9 @@ def main() -> None:
             "auto_threshold": auto_threshold,
             "cost_bps": cost_bps,
             "strategy_mode": strategy_mode,
+            "take_profit_pct": take_profit_pct,
+            "stop_loss_pct": stop_loss_pct,
+            "max_holding_days": int(max_holding_days),
         }
 
     result = st.session_state.get("multi_factor_result")

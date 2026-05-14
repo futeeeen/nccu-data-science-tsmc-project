@@ -82,6 +82,9 @@ class FactorRunResult:
     meta_selected_sell_threshold: float
     meta_threshold_table: pd.DataFrame
     strategy_mode: str
+    take_profit_pct: float
+    stop_loss_pct: float
+    max_holding_days: int
 
 
 @lru_cache(maxsize=64)
@@ -170,6 +173,68 @@ def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
 def add_target(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["target"] = (out["Close"].shift(-1) > out["Close"]).astype(int)
+    return out
+
+
+def add_triple_barrier_target(
+    df: pd.DataFrame,
+    take_profit_pct: float = 0.08,
+    stop_loss_pct: float = 0.05,
+    max_holding_days: int = 20,
+) -> pd.DataFrame:
+    out = df.copy()
+    labels: list[float] = []
+    events: list[str | None] = []
+    event_dates: list[pd.Timestamp | pd.NaT] = []
+    event_returns: list[float] = []
+    holding_days: list[float] = []
+    closes = out["Close"].to_numpy()
+    highs = out["High"].to_numpy()
+    lows = out["Low"].to_numpy()
+    index = out.index
+
+    for i in range(len(out)):
+        if i + max_holding_days >= len(out):
+            labels.append(np.nan)
+            events.append(None)
+            event_dates.append(pd.NaT)
+            event_returns.append(np.nan)
+            holding_days.append(np.nan)
+            continue
+
+        entry_price = closes[i]
+        upper = entry_price * (1.0 + take_profit_pct)
+        lower = entry_price * (1.0 - stop_loss_pct)
+        label = 0
+        event = "vertical_barrier"
+        event_idx = i + max_holding_days
+
+        for j in range(i + 1, i + max_holding_days + 1):
+            hit_upper = highs[j] >= upper
+            hit_lower = lows[j] <= lower
+            if hit_lower:
+                label = -1
+                event = "stop_loss"
+                event_idx = j
+                break
+            if hit_upper:
+                label = 1
+                event = "take_profit"
+                event_idx = j
+                break
+
+        labels.append(label)
+        events.append(event)
+        event_dates.append(index[event_idx])
+        event_returns.append(float(closes[event_idx] / entry_price - 1.0))
+        holding_days.append(float(event_idx - i))
+
+    out["tb_label"] = labels
+    out["target"] = out["tb_label"]
+    out["tb_event"] = events
+    out["tb_event_date"] = event_dates
+    out["tb_event_return"] = event_returns
+    out["tb_holding_days"] = holding_days
     return out
 
 
@@ -425,6 +490,14 @@ def get_tree_factor_model() -> object:
     )
 
 
+def positive_class_proba(model, X: pd.DataFrame) -> np.ndarray:
+    proba = model.predict_proba(X)
+    classes = list(model.classes_)
+    if 1 in classes:
+        return proba[:, classes.index(1)]
+    return np.zeros(len(X), dtype=float)
+
+
 def _has_usable_columns(df: pd.DataFrame, cols: list[str]) -> bool:
     return all(col in df.columns for col in cols) and not df[cols].isna().all().all()
 
@@ -465,9 +538,9 @@ def fit_predict_factor(
     model = get_tree_factor_model() if factor_name in {"fundamental", "chip"} else get_factor_model()
     model.fit(train_clean[feature_cols], train_clean["target"])
 
-    val_raw = pd.Series(model.predict_proba(val_clean[feature_cols])[:, 1], index=val_clean.index)
+    val_raw = pd.Series(positive_class_proba(model, val_clean[feature_cols]), index=val_clean.index)
     eval_features = all_eval[feature_cols].replace([np.inf, -np.inf], np.nan).ffill().bfill()
-    eval_raw = pd.Series(model.predict_proba(eval_features)[:, 1], index=all_eval.index)
+    eval_raw = pd.Series(positive_class_proba(model, eval_features), index=all_eval.index)
     eval_score = percentile_score(eval_raw, val_raw)
 
     score = pd.DataFrame(
@@ -559,20 +632,73 @@ def run_score_backtest(
     cost_bps: float,
     sell_threshold: float | None = None,
     strategy_mode: str = "single_threshold",
+    take_profit_pct: float = 0.08,
+    stop_loss_pct: float = 0.05,
+    max_holding_days: int = 20,
 ) -> pd.DataFrame:
     bt = df.loc[score_df.index].copy()
     bt = bt.join(score_df, how="left")
     bt["buy_threshold"] = float(threshold)
     bt["sell_threshold"] = float(threshold if sell_threshold is None else sell_threshold)
     bt["strategy_mode"] = strategy_mode
-    bt["target_position"] = build_target_position(
-        bt["final_score"],
-        buy_threshold=threshold,
-        sell_threshold=sell_threshold,
-        strategy_mode=strategy_mode,
-    )
-    bt["position"] = bt["target_position"].shift(1).fillna(0.0)
     bt["asset_ret"] = bt["Close"].pct_change().fillna(0.0)
+    bt["target_position"] = 0.0
+    bt["position"] = 0.0
+    bt["tb_trade_event"] = ""
+    bt["tb_days_held_live"] = 0
+
+    position = 0.0
+    entry_price = 0.0
+    entry_pos = -1
+    scores = bt["final_score"].fillna(0.0).to_numpy()
+    highs = bt["High"].to_numpy()
+    lows = bt["Low"].to_numpy()
+    closes = bt["Close"].to_numpy()
+    positions = []
+    targets = []
+    events = []
+    held_days = []
+    exit_threshold = threshold if sell_threshold is None else sell_threshold
+
+    for i, score in enumerate(scores):
+        event = ""
+        if position == 1.0:
+            days_held = i - entry_pos
+            hit_stop = lows[i] <= entry_price * (1.0 - stop_loss_pct)
+            hit_profit = highs[i] >= entry_price * (1.0 + take_profit_pct)
+            hit_time = days_held >= max_holding_days
+            hit_model_exit = strategy_mode == "hysteresis" and score <= exit_threshold
+            if hit_stop:
+                position = 0.0
+                event = "stop_loss"
+            elif hit_profit:
+                position = 0.0
+                event = "take_profit"
+            elif hit_time:
+                position = 0.0
+                event = "vertical_barrier"
+            elif hit_model_exit:
+                position = 0.0
+                event = "model_exit"
+
+        if position == 0.0 and score >= threshold and event == "":
+            position = 1.0
+            entry_price = closes[i]
+            entry_pos = i
+            event = "entry"
+
+        targets.append(position)
+        positions.append(position)
+        events.append(event)
+        held_days.append(float(i - entry_pos) if position == 1.0 else 0.0)
+
+    bt["target_position"] = targets
+    bt["position"] = pd.Series(positions, index=bt.index).shift(1).fillna(0.0)
+    bt["tb_trade_event"] = events
+    bt["tb_days_held_live"] = held_days
+    bt["take_profit_pct"] = take_profit_pct
+    bt["stop_loss_pct"] = stop_loss_pct
+    bt["max_holding_days"] = max_holding_days
     bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"])
     bt["cost"] = bt["position_chg"] * (cost_bps / 10000.0)
     bt["strategy_ret"] = bt["position"] * bt["asset_ret"] - bt["cost"]
@@ -627,6 +753,9 @@ def choose_final_threshold(
     threshold_max: float,
     threshold_step: float,
     cost_bps: float,
+    take_profit_pct: float,
+    stop_loss_pct: float,
+    max_holding_days: int,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_threshold = threshold_min
@@ -634,7 +763,15 @@ def choose_final_threshold(
     best_return = -np.inf
     thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
     for threshold in thresholds:
-        bt = run_score_backtest(df, val_score_df, float(threshold), cost_bps)
+        bt = run_score_backtest(
+            df,
+            val_score_df,
+            float(threshold),
+            cost_bps,
+            take_profit_pct=take_profit_pct,
+            stop_loss_pct=stop_loss_pct,
+            max_holding_days=max_holding_days,
+        )
         d = diagnostics(bt)
         rows.append(
             {
@@ -659,6 +796,9 @@ def choose_hysteresis_thresholds(
     threshold_max: float,
     threshold_step: float,
     cost_bps: float,
+    take_profit_pct: float,
+    stop_loss_pct: float,
+    max_holding_days: int,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_buy_threshold = threshold_min
@@ -676,6 +816,9 @@ def choose_hysteresis_thresholds(
                 cost_bps,
                 sell_threshold=float(sell_threshold),
                 strategy_mode="hysteresis",
+                take_profit_pct=take_profit_pct,
+                stop_loss_pct=stop_loss_pct,
+                max_holding_days=max_holding_days,
             )
             d = diagnostics(bt)
             rows.append(
@@ -712,6 +855,9 @@ def run_meta_model_strategy(
     cost_bps: float,
     strategy_mode: str,
     fixed_sell_threshold: float,
+    take_profit_pct: float,
+    stop_loss_pct: float,
+    max_holding_days: int,
 ) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, float, pd.DataFrame]:
     meta_train_idx, meta_val_idx = split_validation_for_meta(val_df)
     meta_train = score_df.loc[meta_train_idx, META_SCORE_COLS].join(df["target"]).dropna()
@@ -727,6 +873,9 @@ def run_meta_model_strategy(
             cost_bps,
             sell_threshold=fixed_sell_threshold if strategy_mode == "hysteresis" else None,
             strategy_mode=strategy_mode,
+            take_profit_pct=take_profit_pct,
+            stop_loss_pct=stop_loss_pct,
+            max_holding_days=max_holding_days,
         )
         summary = pd.DataFrame(
             [{"item": "meta_model_status", "value": "neutral_insufficient_validation_data"}]
@@ -742,7 +891,7 @@ def run_meta_model_strategy(
     model.fit(meta_train[META_SCORE_COLS], meta_train["target"])
 
     meta_val_score = score_df.loc[meta_val.index, META_SCORE_COLS].copy()
-    meta_val_score["final_score"] = model.predict_proba(meta_val[META_SCORE_COLS])[:, 1] * 100.0
+    meta_val_score["final_score"] = positive_class_proba(model, meta_val[META_SCORE_COLS]) * 100.0
     if strategy_mode == "hysteresis":
         selected_threshold, selected_sell_threshold, threshold_table = choose_hysteresis_thresholds(
             df=df,
@@ -751,6 +900,9 @@ def run_meta_model_strategy(
             threshold_max=threshold_max,
             threshold_step=threshold_step,
             cost_bps=cost_bps,
+            take_profit_pct=take_profit_pct,
+            stop_loss_pct=stop_loss_pct,
+            max_holding_days=max_holding_days,
         )
     else:
         selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
@@ -760,10 +912,13 @@ def run_meta_model_strategy(
             threshold_max=threshold_max,
             threshold_step=threshold_step,
             cost_bps=cost_bps,
+            take_profit_pct=take_profit_pct,
+            stop_loss_pct=stop_loss_pct,
+            max_holding_days=max_holding_days,
         )
 
     test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
-    test_features["meta_probability"] = model.predict_proba(test_features[META_SCORE_COLS])[:, 1]
+    test_features["meta_probability"] = positive_class_proba(model, test_features[META_SCORE_COLS])
     test_features["meta_score"] = test_features["meta_probability"] * 100.0
     test_score = test_features[META_SCORE_COLS + ["meta_probability", "meta_score"]].copy()
     test_score["final_score"] = test_features["meta_score"]
@@ -774,10 +929,15 @@ def run_meta_model_strategy(
         cost_bps,
         sell_threshold=selected_sell_threshold if strategy_mode == "hysteresis" else None,
         strategy_mode=strategy_mode,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
     )
 
     clf = model.named_steps["clf"]
-    coef = clf.coef_[0]
+    clf_classes = list(clf.classes_)
+    coef_idx = clf_classes.index(1) if 1 in clf_classes and clf.coef_.shape[0] > 1 else 0
+    coef = clf.coef_[coef_idx]
     summary_rows = [
         {"item": "meta_model_status", "value": "model"},
         {"item": "meta_train_rows", "value": len(meta_train)},
@@ -843,6 +1003,9 @@ def run_multi_factor_pipeline(
     fundamental_weight: float = 0.4,
     chip_weight: float = 0.4,
     strategy_mode: str = "single_threshold",
+    take_profit_pct: float = 0.08,
+    stop_loss_pct: float = 0.05,
+    max_holding_days: int = 20,
 ) -> FactorRunResult:
     notes: list[str] = []
     raw = download_price_data(ticker, start, end, finmind_token)
@@ -894,8 +1057,19 @@ def run_multi_factor_pipeline(
     notes.append(fund_note)
     df, chip_note = merge_chip_data(df, chip_df)
     notes.append(chip_note)
-    df = add_target(df).replace([np.inf, -np.inf], np.nan)
+    df = add_triple_barrier_target(
+        df,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
+    ).replace([np.inf, -np.inf], np.nan)
     df = df.dropna(subset=TECHNICAL_COLS + ["target"]).copy()
+    label_counts = df["target"].value_counts(dropna=True).sort_index().to_dict()
+    notes.append(
+        "Triple Barrier labels applied: "
+        f"take_profit={take_profit_pct:.2%}, stop_loss={stop_loss_pct:.2%}, "
+        f"max_holding_days={max_holding_days}, label_counts={label_counts}."
+    )
 
     train_df, val_df, test_df = time_series_split_three(df, val_size=val_size, test_size=test_size)
     score_parts = []
@@ -925,6 +1099,9 @@ def run_multi_factor_pipeline(
                 threshold_max=threshold_max,
                 threshold_step=threshold_step,
                 cost_bps=cost_bps,
+                take_profit_pct=take_profit_pct,
+                stop_loss_pct=stop_loss_pct,
+                max_holding_days=max_holding_days,
             )
         else:
             selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
@@ -934,6 +1111,9 @@ def run_multi_factor_pipeline(
                 threshold_max=threshold_max,
                 threshold_step=threshold_step,
                 cost_bps=cost_bps,
+                take_profit_pct=take_profit_pct,
+                stop_loss_pct=stop_loss_pct,
+                max_holding_days=max_holding_days,
             )
     backtest_df = run_score_backtest(
         df,
@@ -942,6 +1122,9 @@ def run_multi_factor_pipeline(
         cost_bps,
         sell_threshold=selected_sell_threshold if strategy_mode == "hysteresis" else None,
         strategy_mode=strategy_mode,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
     )
     backtest_df = add_feature_percentiles(backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_sell_threshold, meta_threshold_table = run_meta_model_strategy(
@@ -955,6 +1138,9 @@ def run_multi_factor_pipeline(
         cost_bps=cost_bps,
         strategy_mode=strategy_mode,
         fixed_sell_threshold=sell_threshold,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
     )
     meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     weighted_d = diagnostics(backtest_df)
@@ -988,4 +1174,7 @@ def run_multi_factor_pipeline(
         meta_selected_sell_threshold=meta_sell_threshold,
         meta_threshold_table=meta_threshold_table,
         strategy_mode=strategy_mode,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
+        max_holding_days=max_holding_days,
     )
