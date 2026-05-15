@@ -6,13 +6,18 @@ import pandas as pd
 import streamlit as st
 
 from project_glossary import render_sticky_title_glossary
-from triple_barrier_system import TECHNICAL_COLS, run_multi_factor_pipeline
+from triple_barrier_system import (
+    CHIP_COLS,
+    FUNDAMENTAL_COLS,
+    TECHNICAL_COLS,
+    run_multi_factor_pipeline as run_triple_barrier_pipeline,
+)
 
 
 TEXT = {
     "en": {
-        "app_title": "TSMC Multi-Factor Investment Analysis",
-        "app_caption": "Technical, fundamental, and chip factors are scored separately, calibrated to 0-100, then blended.",
+        "app_title": "TSMC Triple Barrier Strategy Analysis",
+        "app_caption": "Technical, fundamental, and chip factors are trained against Triple Barrier labels, calibrated to 0-100, then converted into trading signals.",
         "data": "Data",
         "ticker": "Ticker",
         "start_date": "Start date",
@@ -40,19 +45,21 @@ TEXT = {
         "take_profit_pct": "Take-profit barrier (%)",
         "stop_loss_pct": "Stop-loss barrier (%)",
         "max_holding_days": "Vertical barrier (trading days)",
-        "run": "Run multi-factor analysis",
-        "score_design": "Score Design",
+        "run": "Run triple-barrier analysis",
+        "score_design": "Triple Barrier Score Design",
         "data_source": "Data Source",
         "expected_csv": "Expected CSV Format",
-        "running": "Running multi-factor pipeline...",
-        "initial_info": "Upload factor data if available, set weights, and click Run multi-factor analysis.",
+        "running": "Running triple-barrier pipeline...",
+        "initial_info": "Upload factor data if available, set weights and barrier parameters, then click Run triple-barrier analysis.",
         "cached": "Showing cached result from the last run",
         "data_notes": "Data Notes",
         "tab_overview": "Overview",
         "tab_compare": "Strategy Comparison",
         "tab_explain": "Factor Explanation",
+        "tab_training_data": "Training Data",
         "tab_architecture": "Architecture",
         "tab_signals": "Signals & Download",
+        "tab_references": "References",
         "factor_status": "Factor Model Status",
         "performance": "Performance",
         "strategy_return": "Strategy return",
@@ -69,7 +76,7 @@ TEXT = {
         "score_contributions": "Score Contributions",
         "equity_curve": "Equity Curve",
         "factor_explanation": "Factor Contribution Explanation",
-        "factor_explanation_caption": "Select a test date to inspect why technical, fundamental, and chip contributions are high or low.",
+        "factor_explanation_caption": "Select a test date to inspect why the Triple Barrier trading score and factor contributions are high or low.",
         "strategy_to_explain": "Strategy to explain",
         "manual_score": "Manual weighted score",
         "meta_score": "Meta model score",
@@ -78,7 +85,7 @@ TEXT = {
         "buy_threshold": "Buy threshold",
         "sell_threshold": "Sell threshold",
         "decision": "Decision",
-        "next_position": "Next-day position",
+        "next_position": "Next target position",
         "technical_score": "Technical score",
         "fundamental_score": "Fundamental score",
         "chip_score": "Chip score",
@@ -98,15 +105,15 @@ TEXT = {
         "no_chip": "No chip driver data is available for this date.",
         "contribution_over_time": "Contribution Over Time",
         "strategy_compare_title": "Manual Weighted Score vs Meta Model Score",
-        "strategy_compare_caption": "Manual weighted score uses your chosen weights. Meta model learns how the three factor scores interact.",
+        "strategy_compare_caption": "Manual weighted score uses your chosen weights. Meta model learns how the three factor scores relate to Triple Barrier outcomes.",
         "meta_summary": "Meta Model Training Summary",
         "meta_threshold": "Meta Threshold Search",
         "meta_skipped": "Meta threshold search was skipped because validation data was insufficient.",
         "equity_compare": "Equity Curve Comparison",
         "latest_signals": "Latest Test Signals",
         "signal_strategy": "Signal table strategy",
-        "download": "Download multi_factor_backtest_result.csv",
-        "architecture_title": "Interactive Project Architecture",
+        "download": "Download triple_barrier_backtest_result.csv",
+        "architecture_title": "Triple Barrier Architecture",
         "architecture_caption": "Switch granularity, inspect each module, and connect the graph to what the dashboard produces.",
         "granularity": "Granularity",
         "overview_level": "Overview",
@@ -116,7 +123,10 @@ TEXT = {
         "module_inputs": "Inputs",
         "module_outputs": "Outputs",
         "module_evidence": "Evidence in this app",
-        "architecture_note": "This page explains the stock-analysis project architecture.",
+        "architecture_note": "This page explains the Triple Barrier strategy architecture.",
+        "references_title": "References",
+        "references_caption": "Triple Barrier Labeling is a financial machine learning labeling method commonly attributed to Marcos López de Prado.",
+        "references_project_note": "This app adapts the idea for a long-only TSMC strategy: the label asks whether price reaches the take-profit barrier before the stop-loss barrier or the vertical time barrier.",
         "buy_decision": "BUY / HOLD",
         "cash_decision": "NO BUY / CASH",
         "high": "high",
@@ -126,8 +136,8 @@ TEXT = {
         "low": "low",
     },
     "zh": {
-        "app_title": "多因子投資分析工具",
-        "app_caption": "技術面、基本面、籌碼面會分別訓練成分數，校正為 0-100 後再合成最終交易分數。",
+        "app_title": "台積電 Triple Barrier 策略分析工具",
+        "app_caption": "技術面、基本面、籌碼面會以 Triple Barrier 標籤訓練成分數，校正為 0-100 後再轉成交易訊號。",
         "data": "資料設定",
         "ticker": "股票代號",
         "start_date": "開始日期",
@@ -155,18 +165,21 @@ TEXT = {
         "take_profit_pct": "停利障礙（%）",
         "stop_loss_pct": "停損障礙（%）",
         "max_holding_days": "垂直時間障礙（交易日）",
-        "run": "執行多因子分析",
-        "score_design": "分數設計",
+        "run": "執行 Triple Barrier 分析",
+        "score_design": "Triple Barrier 分數設計",
         "data_source": "資料來源",
         "expected_csv": "CSV 格式範例",
-        "running": "正在執行多因子分析...",
-        "initial_info": "若有因子資料可先上傳，設定權重後按下執行多因子分析。",
+        "running": "正在執行 Triple Barrier 分析...",
+        "initial_info": "若有因子資料可先上傳，設定權重與障礙參數後按下執行 Triple Barrier 分析。",
         "cached": "目前顯示上一次執行結果",
         "data_notes": "資料備註",
         "tab_overview": "總覽",
         "tab_compare": "策略比較",
         "tab_explain": "因子解釋",
+        "tab_training_data": "訓練資料",
+        "tab_architecture": "架構",
         "tab_signals": "訊號與下載",
+        "tab_references": "References",
         "factor_status": "因子模型狀態",
         "performance": "績效表現",
         "strategy_return": "策略報酬",
@@ -183,7 +196,7 @@ TEXT = {
         "score_contributions": "分數貢獻",
         "equity_curve": "權益曲線",
         "factor_explanation": "因子貢獻解釋",
-        "factor_explanation_caption": "選擇測試日期，查看技術面、基本面、籌碼面的分數為何偏高或偏低。",
+        "factor_explanation_caption": "選擇測試日期，查看 Triple Barrier 交易分數與各因子貢獻為何偏高或偏低。",
         "strategy_to_explain": "要解釋的策略",
         "manual_score": "人工加權分數",
         "meta_score": "Meta model 分數",
@@ -192,7 +205,7 @@ TEXT = {
         "buy_threshold": "買入門檻",
         "sell_threshold": "賣出門檻",
         "decision": "決策結果",
-        "next_position": "隔日目標部位",
+        "next_position": "下一期目標部位",
         "technical_score": "技術面分數",
         "fundamental_score": "基本面分數",
         "chip_score": "籌碼面分數",
@@ -212,14 +225,28 @@ TEXT = {
         "no_chip": "此日期沒有可用的籌碼面指標解釋資料。",
         "contribution_over_time": "因子貢獻時間序列",
         "strategy_compare_title": "人工加權分數 vs Meta Model 分數",
-        "strategy_compare_caption": "人工加權分數使用你設定的權重；Meta model 則學習三個因子分數之間如何影響隔日漲跌。",
+        "strategy_compare_caption": "人工加權分數使用你設定的權重；Meta model 則學習三個因子分數與 Triple Barrier 結果之間的關係。",
         "meta_summary": "Meta Model 訓練摘要",
         "meta_threshold": "Meta Model 門檻搜尋",
         "meta_skipped": "因驗證資料不足，略過 Meta Model 門檻搜尋。",
         "equity_compare": "權益曲線比較",
         "latest_signals": "近期測試訊號",
         "signal_strategy": "訊號表使用的策略",
-        "download": "下載 multi_factor_backtest_result.csv",
+        "download": "下載 triple_barrier_backtest_result.csv",
+        "architecture_title": "Triple Barrier 架構",
+        "architecture_caption": "切換架構層級、點選模組，並把資料流連回 Triple Barrier dashboard 產出的結果。",
+        "granularity": "架構層級",
+        "overview_level": "總覽",
+        "detail_level": "詳細",
+        "inspect_module": "檢視模組",
+        "module_role": "角色",
+        "module_inputs": "輸入",
+        "module_outputs": "輸出",
+        "module_evidence": "此 app 中的證據",
+        "architecture_note": "此頁說明 Triple Barrier 策略架構。",
+        "references_title": "References",
+        "references_caption": "Triple Barrier Labeling 是金融機器學習常見的標籤方法，通常引用 Marcos López de Prado 的方法。",
+        "references_project_note": "本 app 將此概念調整成台積電多因子 long-only 策略：標籤判斷價格是否先碰到停利障礙，而不是先停損或時間到。",
         "buy_decision": "買進 / 持有",
         "cash_decision": "不買 / 空手",
         "high": "偏高",
@@ -880,10 +907,10 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
         return {
             "goal": {
                 "label": "1. 研究目標",
-                "role": "定義問題：預測隔日股價方向，並檢查訊號是否能支援交易策略。",
-                "inputs": "股票代號、日期區間、交易成本、策略模式。",
-                "outputs": "target：隔日收盤價是否高於今日收盤價。",
-                "evidence": "Score Design 與 Current Trading Strategy 顯示目前模型目標與交易規則。",
+                "role": "定義問題：用停利、停損與最長持有期建立 Triple Barrier 交易事件，評估訊號是否能抓到波段機會。",
+                "inputs": "股票代號、日期區間、交易成本、策略模式、停利障礙、停損障礙、垂直時間障礙。",
+                "outputs": "target：交易事件是否先碰到停利障礙，而不是先停損或時間到。",
+                "evidence": "Triple Barrier Score Design 與 Current Trading Strategy 顯示目前標籤目標與交易規則。",
             },
             "data": {
                 "label": "2. 資料層",
@@ -908,8 +935,8 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
             },
             "submodels": {
                 "label": "5. 三個子模型",
-                "role": "分別訓練 technical、fundamental、chip 模型。",
-                "inputs": "各因子自己的特徵欄位與 target。",
+                "role": "分別訓練 technical、fundamental、chip 模型，學習哪些因子狀態較容易先達成停利。",
+                "inputs": "各因子自己的特徵欄位與 Triple Barrier target。",
                 "outputs": "technical_score、fundamental_score、chip_score。",
                 "evidence": "Overview 的 Factor Model Status 顯示每個因子是 model、neutral 或資料不足。",
             },
@@ -922,10 +949,10 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
             },
             "strategy": {
                 "label": "7. 交易策略",
-                "role": "把 final_score 轉成 target_position。",
-                "inputs": "final_score、buy_threshold、sell_threshold、策略模式。",
-                "outputs": "target_position、position、交易成本、策略報酬。",
-                "evidence": "Current Trading Strategy 顯示單一門檻或雙門檻緩衝策略。",
+                "role": "把 final_score 轉成 target_position，並由 Triple Barrier 風控規則管理出場。",
+                "inputs": "final_score、buy_threshold、sell_threshold、策略模式、停利 / 停損 / 最長持有期。",
+                "outputs": "target_position、position、交易成本、策略報酬、Triple Barrier 出場效果。",
+                "evidence": "Current Trading Strategy 顯示門檻進場邏輯，Triple Barrier settings 定義停利、停損與時間出場。",
             },
             "dashboard": {
                 "label": "8. 視覺化與下載",
@@ -938,10 +965,10 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
     return {
         "goal": {
             "label": "1. Goal",
-            "role": "Define the problem: predict next-day direction and test whether signals can support a trading strategy.",
-            "inputs": "Ticker, date range, trading cost, and strategy mode.",
-            "outputs": "Target: whether tomorrow's close is above today's close.",
-            "evidence": "Score Design and Current Trading Strategy show the modeling goal and trading rule.",
+            "role": "Define the problem: build Triple Barrier trade events with take-profit, stop-loss, and max holding period rules.",
+            "inputs": "Ticker, date range, trading cost, strategy mode, take-profit barrier, stop-loss barrier, and vertical barrier.",
+            "outputs": "Target: whether a trade reaches the upside barrier before the downside barrier or timeout.",
+            "evidence": "Triple Barrier Score Design and Current Trading Strategy show the label target and trading rule.",
         },
         "data": {
             "label": "2. Data Layer",
@@ -966,8 +993,8 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
         },
         "submodels": {
             "label": "5. Factor Submodels",
-            "role": "Train technical, fundamental, and chip models separately.",
-            "inputs": "Each factor's feature columns and the target.",
+            "role": "Train technical, fundamental, and chip models separately to estimate which factor states tend to reach take-profit first.",
+            "inputs": "Each factor's feature columns and the Triple Barrier target.",
             "outputs": "technical_score, fundamental_score, and chip_score.",
             "evidence": "Overview Factor Model Status shows whether each factor is model, neutral, or insufficient.",
         },
@@ -980,10 +1007,10 @@ def architecture_modules(lang: str) -> dict[str, dict[str, str]]:
         },
         "strategy": {
             "label": "7. Trading Strategy",
-            "role": "Convert final_score into target_position.",
-            "inputs": "final_score, buy_threshold, sell_threshold, and strategy mode.",
-            "outputs": "target_position, executed position, trading cost, and strategy return.",
-            "evidence": "Current Trading Strategy shows single-threshold or dual-threshold buffer logic.",
+            "role": "Convert final_score into target_position while Triple Barrier risk controls manage exits.",
+            "inputs": "final_score, buy_threshold, sell_threshold, strategy mode, take-profit, stop-loss, and max holding days.",
+            "outputs": "target_position, executed position, trading cost, strategy return, and Triple Barrier exit behavior.",
+            "evidence": "Current Trading Strategy shows entry logic, while Triple Barrier settings define take-profit, stop-loss, and timeout exits.",
         },
         "dashboard": {
             "label": "8. Visualization & Download",
@@ -1004,7 +1031,7 @@ digraph G {{
   graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.45", ranksep="0.55"];
   node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11, color="#64748b", fillcolor="#eff6ff"];
   edge [color="#64748b", arrowsize=0.8, fontname="Arial", fontsize=10];
-  goal [label="{modules["goal"]["label"]}\\nNext-day direction", fillcolor="#e0f2fe"];
+  goal [label="{modules["goal"]["label"]}\\nTriple Barrier target", fillcolor="#e0f2fe"];
   price [label="Yahoo Finance\\nOHLCV", fillcolor="#f8fafc"];
   finmind [label="FinMind / CSV\\nEPS + Chip", fillcolor="#f8fafc"];
   tech [label="Technical features\\nRSI / MACD / MA", fillcolor="#ecfeff"];
@@ -1012,9 +1039,9 @@ digraph G {{
   chip [label="Chip features\\nInstitutional flow", fillcolor="#fff7ed"];
   split [label="{modules["split"]["label"]}\\nTrain / Validation / Test", fillcolor="#fefce8"];
   submodels [label="{modules["submodels"]["label"]}\\n3 calibrated scores", fillcolor="#ede9fe"];
-  manual [label="Manual weighted score\\nUser weights", fillcolor="#fdf2f8"];
-  meta [label="Meta model score\\nLearned relationship", fillcolor="#fdf2f8"];
-  strategy [label="{modules["strategy"]["label"]}\\nSingle or dual threshold", fillcolor="#fee2e2"];
+  manual [label="Manual barrier score\\nUser weights", fillcolor="#fdf2f8"];
+  meta [label="Meta barrier score\\nLearned outcome relationship", fillcolor="#fdf2f8"];
+  strategy [label="{modules["strategy"]["label"]}\\nThreshold + barrier exits", fillcolor="#fee2e2"];
   dashboard [label="{modules["dashboard"]["label"]}\\nCharts + explanations + CSV", fillcolor="#dcfce7"];
   goal -> price;
   goal -> finmind;
@@ -1050,12 +1077,8 @@ digraph G {{
 
 
 def render_architecture_explorer(result, lang: str) -> None:
-    title = tr(lang, "architecture_title") if lang == "en" else "互動式專案架構探索"
-    caption = (
-        "Switch granularity, inspect each module, and connect the graph to what the dashboard produces."
-        if lang == "en"
-        else "切換架構層級、點選模組，並把資料流連回 dashboard 產出的結果。"
-    )
+    title = tr(lang, "architecture_title")
+    caption = tr(lang, "architecture_caption")
     st.subheader(title)
     st.caption(caption)
     levels = {
@@ -1099,8 +1122,157 @@ def render_architecture_explorer(result, lang: str) -> None:
         s3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
         s4.metric("Strategy mode" if lang == "en" else "策略模式", strategy_mode_label(lang, result.strategy_mode))
 
+
+def render_references(lang: str) -> None:
+    st.subheader(tr(lang, "references_title"))
+    st.caption(tr(lang, "references_caption"))
+
+    if lang == "zh":
+        st.markdown(
+            """
+            #### 方法來源
+
+            Triple Barrier Method 通常引用 Marcos López de Prado 的 *Advances in Financial Machine Learning*
+            第 3 章 Labeling。該章包含固定時間標籤、動態門檻、Triple Barrier Method、meta-labeling 等金融機器學習標籤設計。
+
+            #### 本專案如何使用
+
+            本 app 使用三個障礙定義一個交易事件：
+
+            - **上方水平障礙**：停利門檻，價格先碰到代表較正面的 long trade 結果。
+            - **下方水平障礙**：停損門檻，價格先碰到代表交易失敗或風險事件。
+            - **垂直時間障礙**：最長持有期，若停利與停損都沒先發生，就在時間到時結束事件。
+
+            本專案把這個事件標籤用於監督式學習，讓模型不只學隔日漲跌，而是學「是否較可能先達成停利」。
+
+            #### 參考資料
+
+            - Marcos López de Prado, *Advances in Financial Machine Learning*, Wiley, 2018.
+              O'Reilly 書籍頁面列出 Chapter 3 Labeling，其中包含 **The Triple-Barrier Method**。
+              <https://www.oreilly.com/library/view/advances-in-financial/9781119482086/c03.xhtml>
+            - MLFinPy documentation, **Data Labelling**.
+              文件說明 triple-barrier method 與 meta-labeling 的實作脈絡。
+              <https://mlfinpy.readthedocs.io/en/stable/Labelling.html>
+            """
+        )
+    else:
+        st.markdown(
+            """
+            #### Method Origin
+
+            The Triple Barrier Method is commonly cited from Marcos López de Prado's
+            *Advances in Financial Machine Learning*, Chapter 3, Labeling. That chapter covers fixed-time
+            horizon labels, dynamic thresholds, the Triple Barrier Method, and meta-labeling.
+
+            #### How This Project Uses It
+
+            This app defines a trade event with three barriers:
+
+            - **Upper horizontal barrier**: take-profit threshold. Reaching this first is treated as a favorable long-trade outcome.
+            - **Lower horizontal barrier**: stop-loss threshold. Reaching this first is treated as a failed or risk event.
+            - **Vertical time barrier**: maximum holding period. If neither price barrier is reached first, the event expires at this time limit.
+
+            The project uses this event label for supervised learning, so the model learns whether a setup is more likely
+            to reach take-profit first instead of only predicting next-day direction.
+
+            #### References
+
+            - Marcos López de Prado, *Advances in Financial Machine Learning*, Wiley, 2018.
+              The O'Reilly book page lists Chapter 3, Labeling, including **The Triple-Barrier Method**.
+              <https://www.oreilly.com/library/view/advances-in-financial/9781119482086/c03.xhtml>
+            - MLFinPy documentation, **Data Labelling**.
+              This documentation describes the triple-barrier method implementation context with meta-labeling.
+              <https://mlfinpy.readthedocs.io/en/stable/Labelling.html>
+            """
+        )
+
+    st.info(tr(lang, "references_project_note"))
+
+
+def render_training_data_tab(result, lang: str) -> None:
+    st.subheader("Training Data" if lang == "en" else "訓練資料")
+    if lang == "zh":
+        st.markdown(
+            """
+            這個頁籤說明 Triple Barrier 模型實際使用的資料、處理流程與監督式學習標籤。
+
+            - **資料來源**：Yahoo Finance / FinMind 價格資料、FinMind 或 CSV 的 EPS、三大法人與融資融券資料。
+            - **處理前資料**：價格量、EPS、法人買賣超、融資融券餘額。
+            - **處理後資料**：技術面、基本面、籌碼面特徵，並加入 Triple Barrier 事件欄位。
+            - **訓練目標**：`target = 1` 代表先碰到停利障礙；`target = -1` 代表先碰到停損；`target = 0` 代表時間到。
+            - **訓練方式**：technical / fundamental / chip 各自學習 Triple Barrier target，再校正為 0-100 分數；Meta model 使用三個因子分數作為輸入。
+            """
+        )
+    else:
+        st.markdown(
+            """
+            This tab explains the actual data used by the Triple Barrier models, the processing flow, and the supervised label.
+
+            - **Data sources**: Yahoo Finance / FinMind price data, plus FinMind or CSV EPS, institutional flow, and margin/short data.
+            - **Before processing**: price/volume, EPS, institutional net buy, and margin/short balances.
+            - **After processing**: technical, fundamental, and chip features plus Triple Barrier event columns.
+            - **Training target**: `target = 1` when take-profit is reached first; `target = -1` when stop-loss is reached first; `target = 0` when the event times out.
+            - **Training design**: technical / fundamental / chip submodels learn the Triple Barrier target and are calibrated to 0-100 scores; the Meta model uses the three factor scores as inputs.
+            """
+        )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Train rows" if lang == "en" else "訓練筆數", f"{len(result.train_df):,}")
+    c2.metric("Validation rows" if lang == "en" else "驗證筆數", f"{len(result.val_df):,}")
+    c3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
+    c4.metric("Total rows" if lang == "en" else "總筆數", f"{len(result.df):,}")
+
+    b1, b2, b3 = st.columns(3)
+    b1.metric("Take-profit" if lang == "en" else "停利障礙", fmt_pct(result.take_profit_pct))
+    b2.metric("Stop-loss" if lang == "en" else "停損障礙", fmt_pct(result.stop_loss_pct))
+    b3.metric("Max holding days" if lang == "en" else "最長持有日", f"{result.max_holding_days}")
+
+    st.markdown("### " + ("Triple Barrier Label Distribution" if lang == "en" else "Triple Barrier 標籤分布"))
+    label_counts = result.df["target"].value_counts(dropna=False).sort_index().rename("rows").reset_index()
+    label_counts.columns = ["target", "rows"]
+    st.dataframe(label_counts, use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Data Source Notes" if lang == "en" else "資料來源備註"))
+    for note in result.data_notes:
+        st.write(f"- {note}")
+
+    st.markdown("### " + ("Feature Groups" if lang == "en" else "特徵群組"))
+    feature_table = pd.DataFrame(
+        [{"factor": "technical", "feature": feature} for feature in TECHNICAL_COLS]
+        + [{"factor": "fundamental", "feature": feature} for feature in FUNDAMENTAL_COLS]
+        + [{"factor": "chip", "feature": feature} for feature in CHIP_COLS]
+    )
+    st.dataframe(feature_table, use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Usable Rows by Factor" if lang == "en" else "各因子可用資料筆數"))
+    st.dataframe(result.factor_data_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Processed Training Data Preview" if lang == "en" else "處理後訓練資料預覽"))
+    preview_cols = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+        "target",
+        "tb_label",
+        "tb_event",
+        "tb_event_date",
+        "tb_event_return",
+        "tb_holding_days",
+        *TECHNICAL_COLS,
+        *FUNDAMENTAL_COLS,
+        *CHIP_COLS,
+    ]
+    preview_cols = [col for col in preview_cols if col in result.df.columns]
+    st.dataframe(result.df[preview_cols].tail(100), use_container_width=True)
+
+    st.markdown("### " + ("Score Data Generated for Modeling" if lang == "en" else "模型產生的分數資料"))
+    st.dataframe(result.score_df.tail(100), use_container_width=True)
+
+
 def main() -> None:
-    st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
+    st.set_page_config(page_title="TSMC Triple Barrier Strategy", layout="wide")
 
     with st.sidebar:
         language_label = st.selectbox("Language / 語言", ["English", "繁體中文"], index=0)
@@ -1200,23 +1372,25 @@ def main() -> None:
     if lang == "zh":
         st.markdown(
             """
-        - 每個因子模型會先產生類似上漲機率的原始分數。
+        - Triple Barrier 會用停利障礙、停損障礙與最長持有期，將每個交易日標記成較貼近波段交易的事件結果。
+        - 每個因子模型會先產生「較可能先碰到停利障礙」的原始分數。
         - 原始分數會用驗證期間的百分位排名校正成 0-100 分。
         - 最終分數 = 技術面分數 * 技術面權重 + 基本面分數 * 基本面權重 + 籌碼面分數 * 籌碼面權重。
         - 即使某個模型的原始機率比較保守，百分位校正仍可讓它保有設定好的決策權重。
         - EPS 會依估計財報公告日對齊，降低偷看未來資料的風險。
-        - 另外也會訓練第二層 Meta model，讓你比較「人工設定權重」與「模型學習三因子關係」的差異。
+        - 另外也會訓練第二層 Meta model，讓你比較「人工設定權重」與「模型學習三因子和 Triple Barrier 結果關係」的差異。
         """
         )
     else:
         st.markdown(
             """
-        - Each factor model produces a raw probability-like score.
+        - Triple Barrier labeling turns each trading day into an event outcome using take-profit, stop-loss, and max holding period rules.
+        - Each factor model produces a raw score for the probability of reaching the upside barrier first.
         - Raw scores are calibrated with validation percentile ranking into a 0-100 factor score.
         - Final score = technical score * technical weight + fundamental score * fundamental weight + chip score * chip weight.
         - This keeps the technical factor at the intended weight even if its raw model probabilities are conservative.
         - EPS is aligned by estimated report availability date to reduce look-ahead bias.
-        - A second-stage meta model is also trained on the three calibrated factor scores, so you can compare learned relationships against manual weights.
+        - A second-stage meta model is also trained on the three calibrated factor scores, so you can compare manual weights against learned Triple Barrier outcome relationships.
         """
         )
 
@@ -1266,7 +1440,7 @@ def main() -> None:
         resolved_finmind_token, finmind_token_source = resolve_finmind_token(finmind_token)
 
         with st.spinner(tr(lang, "running")):
-            result = run_multi_factor_pipeline(
+            result = run_triple_barrier_pipeline(
                 ticker=ticker,
                 start=str(start),
                 end=str(end),
@@ -1291,8 +1465,8 @@ def main() -> None:
             )
         if use_finmind:
             result.data_notes.insert(0, f"FinMind token source: {finmind_token_source}.")
-        st.session_state["multi_factor_result"] = result
-        st.session_state["multi_factor_params"] = {
+        st.session_state["triple_barrier_result"] = result
+        st.session_state["triple_barrier_params"] = {
             "ticker": ticker,
             "start": str(start),
             "end": str(end),
@@ -1307,13 +1481,19 @@ def main() -> None:
             "max_holding_days": int(max_holding_days),
         }
 
-    result = st.session_state.get("multi_factor_result")
+    result = st.session_state.get("triple_barrier_result")
     if result is None:
         st.info(tr(lang, "initial_info"))
-        render_architecture_explorer(None, lang)
+        initial_architecture, initial_references = st.tabs(
+            [tr(lang, "tab_architecture"), tr(lang, "tab_references")]
+        )
+        with initial_architecture:
+            render_architecture_explorer(None, lang)
+        with initial_references:
+            render_references(lang)
         return
 
-    params = st.session_state.get("multi_factor_params", {})
+    params = st.session_state.get("triple_barrier_params", {})
     st.caption(
         tr(lang, "cached")
         + (f": {params.get('ticker')} ({params.get('start')} to {params.get('end')})." if params else ".")
@@ -1334,13 +1514,15 @@ def main() -> None:
             else:
                 st.success(display_note)
 
-    tab_overview, tab_compare, tab_explain, tab_architecture, tab_signals = st.tabs(
+    tab_overview, tab_compare, tab_explain, tab_training_data, tab_architecture, tab_signals, tab_references = st.tabs(
         [
             tr(lang, "tab_overview"),
             tr(lang, "tab_compare"),
             tr(lang, "tab_explain"),
+            tr(lang, "tab_training_data"),
             tr(lang, "tab_architecture"),
             tr(lang, "tab_signals"),
+            tr(lang, "tab_references"),
         ]
     )
 
@@ -1399,7 +1581,7 @@ def main() -> None:
 
         st.subheader(tr(lang, "equity_curve"))
         curve = result.backtest_df[["strategy_cum", "buy_hold_cum"]].copy()
-        curve.columns = ["Multi-factor strategy", "Buy & Hold"] if lang == "en" else ["多因子策略", "買進持有"]
+        curve.columns = ["Triple Barrier strategy", "Buy & Hold"] if lang == "en" else ["Triple Barrier 策略", "買進持有"]
         st.line_chart(curve, use_container_width=True)
 
     with tab_compare:
@@ -1407,6 +1589,9 @@ def main() -> None:
 
     with tab_explain:
         render_factor_explanation(result, lang)
+
+    with tab_training_data:
+        render_training_data_tab(result, lang)
 
     with tab_architecture:
         render_architecture_explorer(result, lang)
@@ -1441,9 +1626,12 @@ def main() -> None:
         st.download_button(
             tr(lang, "download"),
             data=csv_bytes,
-            file_name="multi_factor_backtest_result.csv",
+            file_name="triple_barrier_backtest_result.csv",
             mime="text/csv",
         )
+
+    with tab_references:
+        render_references(lang)
 
 
 if __name__ == "__main__":

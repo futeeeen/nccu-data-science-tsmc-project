@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-from multi_factor_system import TECHNICAL_COLS, run_multi_factor_pipeline
+from multi_factor_system import CHIP_COLS, FUNDAMENTAL_COLS, TECHNICAL_COLS, run_multi_factor_pipeline
 from project_glossary import render_sticky_title_glossary
 
 
@@ -47,6 +47,7 @@ TEXT = {
         "tab_overview": "Overview",
         "tab_compare": "Strategy Comparison",
         "tab_explain": "Factor Explanation",
+        "tab_training_data": "Training Data",
         "tab_architecture": "Architecture",
         "tab_signals": "Signals & Download",
         "factor_status": "Factor Model Status",
@@ -158,6 +159,8 @@ TEXT = {
         "tab_overview": "總覽",
         "tab_compare": "策略比較",
         "tab_explain": "因子解釋",
+        "tab_training_data": "訓練資料",
+        "tab_architecture": "架構",
         "tab_signals": "訊號與下載",
         "factor_status": "因子模型狀態",
         "performance": "績效表現",
@@ -1091,6 +1094,64 @@ def render_architecture_explorer(result, lang: str) -> None:
         s3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
         s4.metric("Strategy mode" if lang == "en" else "策略模式", strategy_mode_label(lang, result.strategy_mode))
 
+
+def render_training_data_tab(result, lang: str) -> None:
+    st.subheader("Training Data" if lang == "en" else "訓練資料")
+    if lang == "zh":
+        st.markdown(
+            """
+            這個頁籤說明多因子模型實際使用的資料、處理流程與模型訓練目標。
+
+            - **資料來源**：Yahoo Finance / FinMind 價格資料、FinMind 或 CSV 的 EPS、三大法人與融資融券資料。
+            - **處理前資料**：價格量、EPS、法人買賣超、融資融券餘額。
+            - **處理後資料**：技術面、基本面、籌碼面特徵，並依交易日對齊。
+            - **訓練目標**：`target = 1` 代表下一個交易日收盤價高於當日收盤價，否則為 `0`。
+            - **訓練方式**：technical / fundamental / chip 各自訓練子模型，再校正為 0-100 分數；Meta model 使用三個因子分數作為輸入。
+            """
+        )
+    else:
+        st.markdown(
+            """
+            This tab explains the actual data used by the multi-factor models, the processing flow, and the training target.
+
+            - **Data sources**: Yahoo Finance / FinMind price data, plus FinMind or CSV EPS, institutional flow, and margin/short data.
+            - **Before processing**: price/volume, EPS, institutional net buy, and margin/short balances.
+            - **After processing**: technical, fundamental, and chip features aligned to trading dates.
+            - **Training target**: `target = 1` when the next trading day's close is above today's close; otherwise `0`.
+            - **Training design**: technical / fundamental / chip submodels are trained separately and calibrated to 0-100 scores; the Meta model uses the three factor scores as inputs.
+            """
+        )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Train rows" if lang == "en" else "訓練筆數", f"{len(result.train_df):,}")
+    c2.metric("Validation rows" if lang == "en" else "驗證筆數", f"{len(result.val_df):,}")
+    c3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
+    c4.metric("Total rows" if lang == "en" else "總筆數", f"{len(result.df):,}")
+
+    st.markdown("### " + ("Data Source Notes" if lang == "en" else "資料來源備註"))
+    for note in result.data_notes:
+        st.write(f"- {note}")
+
+    st.markdown("### " + ("Feature Groups" if lang == "en" else "特徵群組"))
+    feature_table = pd.DataFrame(
+        [{"factor": "technical", "feature": feature} for feature in TECHNICAL_COLS]
+        + [{"factor": "fundamental", "feature": feature} for feature in FUNDAMENTAL_COLS]
+        + [{"factor": "chip", "feature": feature} for feature in CHIP_COLS]
+    )
+    st.dataframe(feature_table, use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Usable Rows by Factor" if lang == "en" else "各因子可用資料筆數"))
+    st.dataframe(result.factor_data_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Processed Training Data Preview" if lang == "en" else "處理後訓練資料預覽"))
+    preview_cols = ["Open", "High", "Low", "Close", "Volume", "target", *TECHNICAL_COLS, *FUNDAMENTAL_COLS, *CHIP_COLS]
+    preview_cols = [col for col in preview_cols if col in result.df.columns]
+    st.dataframe(result.df[preview_cols].tail(100), use_container_width=True)
+
+    st.markdown("### " + ("Score Data Generated for Modeling" if lang == "en" else "模型產生的分數資料"))
+    st.dataframe(result.score_df.tail(100), use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Multi-Factor Strategy", layout="wide")
 
@@ -1315,11 +1376,12 @@ def main() -> None:
             else:
                 st.success(display_note)
 
-    tab_overview, tab_compare, tab_explain, tab_architecture, tab_signals = st.tabs(
+    tab_overview, tab_compare, tab_explain, tab_training_data, tab_architecture, tab_signals = st.tabs(
         [
             tr(lang, "tab_overview"),
             tr(lang, "tab_compare"),
             tr(lang, "tab_explain"),
+            tr(lang, "tab_training_data"),
             tr(lang, "tab_architecture"),
             tr(lang, "tab_signals"),
         ]
@@ -1388,6 +1450,9 @@ def main() -> None:
 
     with tab_explain:
         render_factor_explanation(result, lang)
+
+    with tab_training_data:
+        render_training_data_tab(result, lang)
 
     with tab_architecture:
         render_architecture_explorer(result, lang)

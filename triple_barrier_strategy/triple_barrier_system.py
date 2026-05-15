@@ -890,8 +890,14 @@ def run_meta_model_strategy(
     )
     model.fit(meta_train[META_SCORE_COLS], meta_train["target"])
 
+    meta_val_probability = pd.Series(
+        positive_class_proba(model, meta_val[META_SCORE_COLS]),
+        index=meta_val.index,
+    )
     meta_val_score = score_df.loc[meta_val.index, META_SCORE_COLS].copy()
-    meta_val_score["final_score"] = positive_class_proba(model, meta_val[META_SCORE_COLS]) * 100.0
+    meta_val_score["meta_probability"] = meta_val_probability
+    meta_val_score["meta_score"] = percentile_score(meta_val_probability, meta_val_probability)
+    meta_val_score["final_score"] = meta_val_score["meta_score"]
     if strategy_mode == "hysteresis":
         selected_threshold, selected_sell_threshold, threshold_table = choose_hysteresis_thresholds(
             df=df,
@@ -918,8 +924,11 @@ def run_meta_model_strategy(
         )
 
     test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
-    test_features["meta_probability"] = positive_class_proba(model, test_features[META_SCORE_COLS])
-    test_features["meta_score"] = test_features["meta_probability"] * 100.0
+    test_features["meta_probability"] = pd.Series(
+        positive_class_proba(model, test_features[META_SCORE_COLS]),
+        index=test_features.index,
+    )
+    test_features["meta_score"] = percentile_score(test_features["meta_probability"], meta_val_probability)
     test_score = test_features[META_SCORE_COLS + ["meta_probability", "meta_score"]].copy()
     test_score["final_score"] = test_features["meta_score"]
     bt = run_score_backtest(
@@ -945,6 +954,10 @@ def run_meta_model_strategy(
         {"item": "meta_selected_buy_threshold", "value": selected_threshold},
         {"item": "meta_selected_sell_threshold", "value": selected_sell_threshold},
         {"item": "strategy_mode", "value": strategy_mode},
+        {"item": "meta_validation_probability_mean", "value": float(meta_val_probability.mean())},
+        {"item": "meta_validation_probability_min", "value": float(meta_val_probability.min())},
+        {"item": "meta_validation_probability_max", "value": float(meta_val_probability.max())},
+        {"item": "meta_score_calibration", "value": "validation_percentile_rank"},
     ]
     for feature, value in zip(META_SCORE_COLS, coef):
         summary_rows.append({"item": f"coef_{feature}", "value": float(value)})

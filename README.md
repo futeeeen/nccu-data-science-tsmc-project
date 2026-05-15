@@ -12,6 +12,8 @@ This project contains three strategy versions for TSMC stock prediction and back
 
 See `PROJECT_STRUCTURE.md` for the full folder map.
 
+Troubleshooting notes are recorded in `TROUBLESHOOTING.md`.
+
 ## Quick Start
 
 1. Clone the repository and enter the folder.

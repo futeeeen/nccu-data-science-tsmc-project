@@ -37,6 +37,7 @@ TEXT = {
         "run": "Run",
         "initial_info": "Set parameters in the sidebar and click Run. Both dashboards will appear below after one run.",
         "tab_backtest": "Backtest Dashboard",
+        "tab_training_data": "Training Data",
         "tab_lifecycle": "Project Lifecycle",
         "tab_architecture": "Architecture",
         "lifecycle_title": "Data Science Project Lifecycle",
@@ -86,6 +87,7 @@ TEXT = {
         "run": "執行 Run",
         "initial_info": "請先在左側設定參數並按 Run，執行一次後下方會同時出現兩個 Dashboard。",
         "tab_backtest": "回測 Dashboard",
+        "tab_training_data": "訓練資料",
         "tab_lifecycle": "專案流程",
         "tab_architecture": "架構探索",
         "lifecycle_title": "資料科學專案生命週期",
@@ -966,6 +968,56 @@ def render_architecture_explorer(lang: str, result: dict | None = None) -> None:
         c4.metric(tr(lang, "best_model"), result["best_name"])
 
 
+def render_training_data_tab(lang: str, result: dict) -> None:
+    st.subheader("Training Data" if lang == "en" else "訓練資料")
+    if lang == "zh":
+        st.markdown(
+            """
+            這個頁籤說明技術面模型實際使用哪些資料來訓練，以及資料從原始價格轉成模型特徵的流程。
+
+            - **資料來源**：Yahoo Finance OHLCV 價格與成交量資料。
+            - **處理前資料**：每日 `Open / High / Low / Close / Volume`。
+            - **處理後資料**：加入報酬率、均線相對位置、RSI、MACD、成交量變化率等技術指標。
+            - **訓練目標**：`target = 1` 代表下一個交易日收盤價高於當日收盤價，否則為 `0`。
+            - **切分方式**：依時間順序切成 train / validation / test，不隨機打散。
+            """
+        )
+    else:
+        st.markdown(
+            """
+            This tab explains what data the technical models train on and how raw prices become model features.
+
+            - **Data source**: Yahoo Finance OHLCV price and volume data.
+            - **Before processing**: daily `Open / High / Low / Close / Volume`.
+            - **After processing**: returns, relative moving-average position, RSI, MACD, and volume-change features.
+            - **Training target**: `target = 1` when the next trading day's close is above today's close; otherwise `0`.
+            - **Split rule**: chronological train / validation / test split without random shuffling.
+            """
+        )
+
+    train_df = result["train_df"]
+    val_df = result["val_df"]
+    test_df = result["test_df"]
+    df = result["df"]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(tr(lang, "train_rows"), f"{len(train_df):,}")
+    c2.metric(tr(lang, "validation_rows"), f"{len(val_df):,}")
+    c3.metric(tr(lang, "test_rows"), f"{len(test_df):,}")
+    c4.metric(tr(lang, "total_rows"), f"{len(df):,}")
+
+    st.markdown("### " + ("Feature Columns" if lang == "en" else "特徵欄位"))
+    st.dataframe(pd.DataFrame({"feature": FEATURE_COLS}), use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Model Training Summary" if lang == "en" else "模型訓練摘要"))
+    metric_cols = ["model", "val_accuracy", "val_precision", "val_recall", "val_f1", "test_accuracy", "test_f1"]
+    st.dataframe(result["table"][[col for col in metric_cols if col in result["table"].columns]], use_container_width=True, hide_index=True)
+
+    st.markdown("### " + ("Processed Data Preview" if lang == "en" else "處理後資料預覽"))
+    preview_cols = ["Open", "High", "Low", "Close", "Volume", *FEATURE_COLS, "target"]
+    preview_cols = [col for col in preview_cols if col in df.columns]
+    st.dataframe(df[preview_cols].tail(100), use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="TSMC Stock Backtest Dashboard", layout="wide")
 
@@ -1063,8 +1115,8 @@ def main() -> None:
         render_architecture_explorer(lang)
         return
 
-    tab_backtest, tab_lifecycle, tab_architecture = st.tabs(
-        [tr(lang, "tab_backtest"), tr(lang, "tab_lifecycle"), tr(lang, "tab_architecture")]
+    tab_backtest, tab_training_data, tab_lifecycle, tab_architecture = st.tabs(
+        [tr(lang, "tab_backtest"), tr(lang, "tab_training_data"), tr(lang, "tab_lifecycle"), tr(lang, "tab_architecture")]
     )
     with tab_backtest:
         render_backtest_dashboard(
@@ -1082,6 +1134,9 @@ def main() -> None:
             next_prob_up=result["next_prob_up"],
             next_target_position=result["next_target_position"],
         )
+
+    with tab_training_data:
+        render_training_data_tab(lang, result)
 
     with tab_lifecycle:
         render_project_lifecycle_dashboard(
