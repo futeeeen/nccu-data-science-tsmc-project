@@ -70,6 +70,19 @@ From the project root:
 streamlit run triple_barrier_strategy/triple_barrier_app.py
 ```
 
+Or from this folder:
+
+```bash
+cd triple_barrier_strategy
+streamlit run triple_barrier_app.py
+```
+
+If the browser shows a blank page with only the Streamlit toolbar, stop the old Streamlit process and restart it. This usually means the previous session on that port is still running or stuck.
+
+```bash
+streamlit run triple_barrier_app.py --server.port 8512
+```
+
 ## Next Implementation Steps
 
 1. Compare different barrier settings with walk-forward validation.
