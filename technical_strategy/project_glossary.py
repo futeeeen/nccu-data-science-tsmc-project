@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 
@@ -229,12 +231,103 @@ def _matches(query: str) -> list[tuple[str, dict]]:
     return results
 
 
-def render_glossary_search(lang: str = "en", key_prefix: str = "glossary") -> None:
-    _, panel = st.columns([2.5, 1.15])
+def render_sticky_title_glossary(
+    title: str,
+    caption: str,
+    lang: str = "en",
+    key_prefix: str = "glossary",
+) -> None:
+    st.markdown(
+        f"""
+        <style>
+        .strategy-sticky-title {{
+            position: fixed;
+            top: 2.6rem;
+            left: 21rem;
+            right: 2rem;
+            z-index: 999;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+            padding: 0.7rem min(30rem, 34vw) 0.55rem 0;
+        }}
+        .strategy-sticky-title h1 {{
+            color: #1f2937;
+            font-size: 1.45rem;
+            font-weight: 700;
+            line-height: 1.15;
+            letter-spacing: 0;
+            margin: 0;
+        }}
+        .strategy-sticky-title p {{
+            color: #6b7280;
+            font-size: 0.85rem;
+            margin: 0.45rem 0 0 0;
+        }}
+        .strategy-sticky-spacer {{
+            height: 8.5rem;
+        }}
+        details:has(.glossary-panel-marker) {{
+            position: fixed;
+            top: 4.45rem;
+            right: 3rem;
+            width: min(34rem, 34vw);
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(203, 213, 225, 0.95) !important;
+            border-radius: 0.45rem;
+            box-sizing: border-box;
+            box-shadow:
+                0 8px 20px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }}
+        @media (max-width: 900px) {{
+            .strategy-sticky-title {{
+                left: 1rem;
+                right: 1rem;
+                padding-right: 1rem;
+            }}
+            .strategy-sticky-title h1 {{
+                font-size: 1.35rem;
+            }}
+            .strategy-sticky-title p {{
+                font-size: 0.85rem;
+            }}
+            .strategy-sticky-spacer {{
+                height: 10rem;
+            }}
+            details:has(.glossary-panel-marker) {{
+                top: 8.8rem;
+                left: 1rem;
+                right: 1rem;
+                width: auto;
+            }}
+        }}
+        </style>
+        <div class="strategy-sticky-title">
+            <h1>{html.escape(title)}</h1>
+            <p>{html.escape(caption)}</p>
+        </div>
+        <div class="strategy-sticky-spacer"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_glossary_search(lang, key_prefix=key_prefix, sticky=True)
+
+
+def render_glossary_search(lang: str = "en", key_prefix: str = "glossary", sticky: bool = False) -> None:
+    if sticky:
+        st.markdown('<div class="glossary-sticky-anchor"></div>', unsafe_allow_html=True)
+        panel = st.container()
+    else:
+        _, panel = st.columns([2.5, 1.15])
     title = "專有名詞搜尋 / Glossary"
     placeholder = "例如：holding_ratio, hysteresis, Sharpe"
     with panel:
         with st.expander(title, expanded=False):
+            if sticky:
+                st.markdown('<span class="glossary-panel-marker"></span>', unsafe_allow_html=True)
             query = st.text_input("輸入專有名詞", placeholder=placeholder, key=f"{key_prefix}_query")
             search = st.button("搜尋", key=f"{key_prefix}_button")
             if search or query:

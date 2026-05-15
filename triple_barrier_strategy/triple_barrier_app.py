@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-from project_glossary import render_glossary_search
+from project_glossary import render_sticky_title_glossary
 from triple_barrier_system import TECHNICAL_COLS, run_multi_factor_pipeline
 
 
@@ -1189,9 +1189,12 @@ def main() -> None:
         max_holding_days = st.number_input(tr(lang, "max_holding_days"), 3, 120, 20, 1)
         run = st.button(tr(lang, "run"), type="primary")
 
-    st.title(tr(lang, "app_title"))
-    st.caption(tr(lang, "app_caption"))
-    render_glossary_search(lang, key_prefix="triple_barrier_glossary")
+    render_sticky_title_glossary(
+        tr(lang, "app_title"),
+        tr(lang, "app_caption"),
+        lang,
+        key_prefix="triple_barrier_glossary",
+    )
 
     st.subheader(tr(lang, "score_design"))
     if lang == "zh":

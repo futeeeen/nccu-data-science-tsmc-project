@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
-from project_glossary import render_glossary_search
+from project_glossary import render_sticky_title_glossary
 from technical_system import (
     add_indicators,
     download_data,
@@ -992,9 +992,12 @@ def main() -> None:
         )
         run = st.button(tr(lang, "run"), type="primary")
 
-    st.title(tr(lang, "app_title"))
-    st.caption(tr(lang, "app_caption"))
-    render_glossary_search(lang, key_prefix="technical_glossary")
+    render_sticky_title_glossary(
+        tr(lang, "app_title"),
+        tr(lang, "app_caption"),
+        lang,
+        key_prefix="technical_glossary",
+    )
 
     if run:
         if start >= end:
