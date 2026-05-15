@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from multi_factor_system import TECHNICAL_COLS, run_multi_factor_pipeline
+from project_glossary import render_glossary_search
 
 
 TEXT = {
@@ -1177,6 +1178,7 @@ def main() -> None:
 
     st.title(tr(lang, "app_title"))
     st.caption(tr(lang, "app_caption"))
+    render_glossary_search(lang, key_prefix="multi_factor_glossary")
 
     st.subheader(tr(lang, "score_design"))
     if lang == "zh":
