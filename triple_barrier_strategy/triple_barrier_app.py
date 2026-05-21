@@ -42,6 +42,12 @@ TEXT = {
         "threshold_step": "Threshold search step",
         "cost_bps": "Trading cost (bps per position change)",
         "barrier_settings": "Triple Barrier Labeling",
+        "barrier_mode": "Barrier mode",
+        "atr_barrier_mode": "Dynamic ATR barriers",
+        "fixed_pct_barrier_mode": "Fixed percent barriers",
+        "atr_take_profit_mult": "Take-profit ATR multiple",
+        "atr_stop_loss_mult": "Stop-loss ATR multiple",
+        "atr_barrier_caption": "Default: take-profit = entry price + 2 * 14-day ATR; stop-loss = entry price - 1 * 14-day ATR.",
         "take_profit_pct": "Take-profit barrier (%)",
         "stop_loss_pct": "Stop-loss barrier (%)",
         "max_holding_days": "Vertical barrier (trading days)",
@@ -1211,6 +1217,7 @@ def render_training_data_tab(result, lang: str) -> None:
             - **Data sources**: Yahoo Finance / FinMind price data, plus FinMind or CSV EPS, institutional flow, and margin/short data.
             - **Before processing**: price/volume, EPS, institutional net buy, and margin/short balances.
             - **After processing**: technical, fundamental, and chip features plus Triple Barrier event columns.
+            - **Dynamic barriers**: ATR mode uses row-specific barriers, so calm periods get tighter labels and volatile periods get wider labels.
             - **Training target**: `target = 1` when take-profit is reached first; `target = -1` when stop-loss is reached first; `target = 0` when the event times out.
             - **Training design**: technical / fundamental / chip submodels learn the Triple Barrier target and are calibrated to 0-100 scores; the Meta model uses the three factor scores as inputs.
             """
@@ -1222,10 +1229,15 @@ def render_training_data_tab(result, lang: str) -> None:
     c3.metric("Test rows" if lang == "en" else "測試筆數", f"{len(result.test_df):,}")
     c4.metric("Total rows" if lang == "en" else "總筆數", f"{len(result.df):,}")
 
-    b1, b2, b3 = st.columns(3)
-    b1.metric("Take-profit" if lang == "en" else "停利障礙", fmt_pct(result.take_profit_pct))
-    b2.metric("Stop-loss" if lang == "en" else "停損障礙", fmt_pct(result.stop_loss_pct))
-    b3.metric("Max holding days" if lang == "en" else "最長持有日", f"{result.max_holding_days}")
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("Barrier mode" if lang == "en" else "Barrier mode", result.barrier_mode)
+    if result.barrier_mode == "atr":
+        b2.metric("Take-profit" if lang == "en" else "Take-profit", f"{result.atr_take_profit_mult:.2f} x ATR({result.atr_window})")
+        b3.metric("Stop-loss" if lang == "en" else "Stop-loss", f"{result.atr_stop_loss_mult:.2f} x ATR({result.atr_window})")
+    else:
+        b2.metric("Take-profit" if lang == "en" else "停利障礙", fmt_pct(result.take_profit_pct))
+        b3.metric("Stop-loss" if lang == "en" else "停損障礙", fmt_pct(result.stop_loss_pct))
+    b4.metric("Max holding days" if lang == "en" else "最長持有日", f"{result.max_holding_days}")
 
     st.markdown("### " + ("Triple Barrier Label Distribution" if lang == "en" else "Triple Barrier 標籤分布"))
     label_counts = result.df["target"].value_counts(dropna=False).sort_index().rename("rows").reset_index()
@@ -1260,11 +1272,15 @@ def render_training_data_tab(result, lang: str) -> None:
         "tb_event_date",
         "tb_event_return",
         "tb_holding_days",
+        "tb_take_profit_pct",
+        "tb_stop_loss_pct",
+        "atr_14",
+        "atr_14_pct",
         *TECHNICAL_COLS,
         *FUNDAMENTAL_COLS,
         *CHIP_COLS,
     ]
-    preview_cols = [col for col in preview_cols if col in result.df.columns]
+    preview_cols = list(dict.fromkeys(col for col in preview_cols if col in result.df.columns))
     st.dataframe(result.df[preview_cols].tail(100), use_container_width=True)
 
     st.markdown("### " + ("Score Data Generated for Modeling" if lang == "en" else "模型產生的分數資料"))
@@ -1356,8 +1372,23 @@ def main() -> None:
         cost_bps = st.number_input(tr(lang, "cost_bps"), 0.0, 100.0, 10.0, 1.0)
 
         st.header(tr(lang, "barrier_settings"))
-        take_profit_pct = st.number_input(tr(lang, "take_profit_pct"), 1.0, 50.0, 8.0, 0.5)
-        stop_loss_pct = st.number_input(tr(lang, "stop_loss_pct"), 1.0, 50.0, 5.0, 0.5)
+        barrier_options = {
+            tr(lang, "atr_barrier_mode"): "atr",
+            tr(lang, "fixed_pct_barrier_mode"): "fixed_pct",
+        }
+        barrier_label = st.selectbox(tr(lang, "barrier_mode"), list(barrier_options.keys()), index=0)
+        barrier_mode = barrier_options[barrier_label]
+        atr_take_profit_mult = 2.0
+        atr_stop_loss_mult = 1.0
+        take_profit_pct = 8.0
+        stop_loss_pct = 5.0
+        if barrier_mode == "atr":
+            st.caption(tr(lang, "atr_barrier_caption"))
+            atr_take_profit_mult = st.number_input(tr(lang, "atr_take_profit_mult"), 0.25, 10.0, 2.0, 0.25)
+            atr_stop_loss_mult = st.number_input(tr(lang, "atr_stop_loss_mult"), 0.25, 10.0, 1.0, 0.25)
+        else:
+            take_profit_pct = st.number_input(tr(lang, "take_profit_pct"), 1.0, 50.0, 8.0, 0.5)
+            stop_loss_pct = st.number_input(tr(lang, "stop_loss_pct"), 1.0, 50.0, 5.0, 0.5)
         max_holding_days = st.number_input(tr(lang, "max_holding_days"), 3, 120, 20, 1)
         run = st.button(tr(lang, "run"), type="primary")
 
@@ -1385,6 +1416,7 @@ def main() -> None:
         st.markdown(
             """
         - Triple Barrier labeling turns each trading day into an event outcome using take-profit, stop-loss, and max holding period rules.
+        - In dynamic ATR mode, take-profit is entry price + 2 * ATR(14) and stop-loss is entry price - 1 * ATR(14) by default.
         - Each factor model produces a raw score for the probability of reaching the upside barrier first.
         - Raw scores are calibrated with validation percentile ranking into a 0-100 factor score.
         - Final score = technical score * technical weight + fundamental score * fundamental weight + chip score * chip weight.
@@ -1459,8 +1491,11 @@ def main() -> None:
                 fundamental_weight=fund_weight,
                 chip_weight=chip_weight,
                 strategy_mode=strategy_mode,
+                barrier_mode=barrier_mode,
                 take_profit_pct=take_profit_pct / 100.0,
                 stop_loss_pct=stop_loss_pct / 100.0,
+                atr_take_profit_mult=atr_take_profit_mult,
+                atr_stop_loss_mult=atr_stop_loss_mult,
                 max_holding_days=int(max_holding_days),
             )
         if use_finmind:
@@ -1476,8 +1511,11 @@ def main() -> None:
             "auto_threshold": auto_threshold,
             "cost_bps": cost_bps,
             "strategy_mode": strategy_mode,
+            "barrier_mode": barrier_mode,
             "take_profit_pct": take_profit_pct,
             "stop_loss_pct": stop_loss_pct,
+            "atr_take_profit_mult": atr_take_profit_mult,
+            "atr_stop_loss_mult": atr_stop_loss_mult,
             "max_holding_days": int(max_holding_days),
         }
 
@@ -1615,6 +1653,9 @@ def main() -> None:
             "chip_contribution",
             "target_position",
             "position",
+            "tb_trade_event",
+            "entry_take_profit_pct",
+            "entry_stop_loss_pct",
             "strategy_cum",
             "buy_hold_cum",
         ]

@@ -1393,6 +1393,12 @@ def render_sticky_title_glossary(
                 0 8px 20px rgba(15, 23, 42, 0.08);
             overflow: hidden;
         }}
+        details:has(.glossary-panel-marker) div[data-testid="stExpanderDetails"] {{
+            max-height: calc(100vh - 9.2rem);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-bottom: 1rem;
+        }}
         @media (max-width: 900px) {{
             .strategy-sticky-title {{
                 left: 1rem;
@@ -1413,6 +1419,9 @@ def render_sticky_title_glossary(
                 left: 1rem;
                 right: 1rem;
                 width: auto;
+            }}
+            details:has(.glossary-panel-marker) div[data-testid="stExpanderDetails"] {{
+                max-height: calc(100vh - 13.5rem);
             }}
         }}
         </style>

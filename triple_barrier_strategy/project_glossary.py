@@ -255,6 +255,36 @@ TRAINING_DATA_TERMS = {
         'usage': 'Used to normalize chip flow and identify whether price moves happened with strong participation.',
         'interpretation': 'Higher volume often means the move has stronger market confirmation.',
     },
+    'atr_14': {
+        'aliases': ['ATR', 'Average True Range', '14 day ATR', 'average_true_range'],
+        'definition': 'Average True Range over 14 trading days. It measures recent realized price range using high, low, and previous close.',
+        'usage': 'Used as a technical feature and as the dynamic Triple Barrier distance when ATR barrier mode is selected.',
+        'interpretation': 'Higher ATR means the stock is moving in a wider daily range, so dynamic barriers become wider; lower ATR makes barriers tighter.',
+    },
+    'atr_14_pct': {
+        'aliases': ['ATR percent', 'ATR percentage', 'atr pct'],
+        'definition': '14-day ATR divided by Close, converting ATR from price points into a percentage of the current price.',
+        'usage': 'Helps compare volatility across different price levels and supports dynamic barrier interpretation.',
+        'interpretation': 'A larger value means recent volatility is high relative to the stock price.',
+    },
+    'barrier_mode': {
+        'aliases': ['Dynamic ATR barriers', 'Fixed percent barriers', 'ATR barrier mode'],
+        'definition': 'The setting that decides whether Triple Barrier distances use fixed percentages or ATR-based dynamic distances.',
+        'usage': 'In ATR mode, take-profit and stop-loss are calculated from the entry-day ATR; in fixed mode, the user-entered percentages are used.',
+        'interpretation': 'ATR mode adapts the label and exit rules to market volatility, while fixed mode keeps the same percent distance every day.',
+    },
+    'atr_take_profit_mult': {
+        'aliases': ['take-profit ATR multiple', 'take_profit_atr_multiple'],
+        'definition': 'The ATR multiplier used to place the upside take-profit barrier.',
+        'usage': 'Default is 2.0, so the take-profit barrier is entry price plus 2 times 14-day ATR.',
+        'interpretation': 'Higher values require a larger favorable move before the event is labeled take_profit.',
+    },
+    'atr_stop_loss_mult': {
+        'aliases': ['stop-loss ATR multiple', 'stop_loss_atr_multiple'],
+        'definition': 'The ATR multiplier used to place the downside stop-loss barrier.',
+        'usage': 'Default is 1.0, so the stop-loss barrier is entry price minus 1 times 14-day ATR.',
+        'interpretation': 'Lower values make the downside barrier tighter and produce more sensitive risk labels.',
+    },
     'return_1d': {
         'aliases': ['1 day return', 'daily return'],
         'definition': 'The one-day percentage return from the previous Close to the current Close.',
@@ -549,6 +579,18 @@ TRAINING_DATA_TERMS = {
         'usage': 'Used to inspect whether labels are generated quickly or mostly by timeout.',
         'interpretation': 'Shorter holding days mean a price barrier was hit quickly; values near max_holding_days often mean timeout.',
     },
+    'tb_take_profit_pct': {
+        'aliases': ['dynamic take profit pct', 'event take profit pct'],
+        'definition': 'The row-specific take-profit distance converted into a percentage of the entry price.',
+        'usage': 'In ATR mode this is 2 * ATR divided by entry price by default; in fixed mode it equals the fixed take-profit setting.',
+        'interpretation': 'This explains how wide the upper barrier was for that specific training event.',
+    },
+    'tb_stop_loss_pct': {
+        'aliases': ['dynamic stop loss pct', 'event stop loss pct'],
+        'definition': 'The row-specific stop-loss distance converted into a percentage of the entry price.',
+        'usage': 'In ATR mode this is 1 * ATR divided by entry price by default; in fixed mode it equals the fixed stop-loss setting.',
+        'interpretation': 'This explains how wide the lower barrier was for that specific training event.',
+    },
     'take_profit_pct': {
         'aliases': ['take profit percent', 'profit barrier percent'],
         'definition': 'The upside return barrier used by Triple Barrier labeling.',
@@ -614,6 +656,36 @@ TRAINING_DATA_TERMS = {
         'definition': 'F1 score on the final test split, balancing precision and recall.',
         'usage': 'Used as an out-of-sample classification metric.',
         'interpretation': 'Higher test F1 means the model generalized better in directional classification.',
+    },
+    'validation_roc_auc': {
+        'aliases': ['ROC AUC', 'roc_auc', 'validation AUC', 'weighted roc auc'],
+        'definition': 'A ranking metric that measures whether the model gives higher probabilities to take-profit events than to non-take-profit events.',
+        'usage': 'Used to evaluate submodel probability quality for Triple Barrier labels, especially when accuracy can be misleading.',
+        'interpretation': '0.5 is roughly random ranking; higher values mean the model separates favorable breakout events from ordinary or bad events better.',
+    },
+    'validation_average_precision': {
+        'aliases': ['Average Precision', 'AP', 'average_precision'],
+        'definition': 'A precision-recall based metric focused on how well the model ranks rare positive take-profit events.',
+        'usage': 'Useful when positive labels are much rarer than neutral or stop-loss labels.',
+        'interpretation': 'Higher values mean the top-ranked probabilities contain more true take-profit events.',
+    },
+    'validation_positive_rate': {
+        'aliases': ['positive rate', 'take profit rate'],
+        'definition': 'The share of validation rows where target equals 1, meaning take-profit was reached first.',
+        'usage': 'Shown next to ROC AUC to reveal whether the validation set is highly imbalanced.',
+        'interpretation': 'Low positive rate means accuracy is less useful because predicting no positive events can look deceptively good.',
+    },
+    'sample_weight': {
+        'aliases': ['event importance weight', 'train_weight_mean', 'train_weight_max'],
+        'definition': 'A per-sample training weight that makes large realized Triple Barrier events more important during model fitting.',
+        'usage': 'This project weights rows by abs(tb_event_return), so large gains and losses influence the model more than flat days.',
+        'interpretation': 'Higher weights force the classifier to pay more attention to key turning-point examples.',
+    },
+    'class_weight': {
+        'aliases': ['class_weight balanced', 'balanced class weight'],
+        'definition': 'A model setting that compensates for imbalanced target classes by giving rarer labels higher training weight.',
+        'usage': 'Used with LogisticRegression and RandomForest so rare take-profit or stop-loss labels are not ignored.',
+        'interpretation': 'It helps avoid a model that only learns the most common neutral or non-entry pattern.',
     },
     'pred_prob_up': {
         'aliases': ['predicted probability up', 'probability of up move'],
@@ -1393,6 +1465,12 @@ def render_sticky_title_glossary(
                 0 8px 20px rgba(15, 23, 42, 0.08);
             overflow: hidden;
         }}
+        details:has(.glossary-panel-marker) div[data-testid="stExpanderDetails"] {{
+            max-height: calc(100vh - 9.2rem);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-bottom: 1rem;
+        }}
         @media (max-width: 900px) {{
             .strategy-sticky-title {{
                 left: 1rem;
@@ -1413,6 +1491,9 @@ def render_sticky_title_glossary(
                 left: 1rem;
                 right: 1rem;
                 width: auto;
+            }}
+            details:has(.glossary-panel-marker) div[data-testid="stExpanderDetails"] {{
+                max-height: calc(100vh - 13.5rem);
             }}
         }}
         </style>

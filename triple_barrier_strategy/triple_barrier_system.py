@@ -9,6 +9,7 @@ import pandas as pd
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -19,6 +20,8 @@ TECHNICAL_COLS = [
     "bias_5",
     "bias_20",
     "vol_chg",
+    "atr_14",
+    "atr_14_pct",
     "rsi_14",
     "macd",
     "macd_signal",
@@ -82,8 +85,12 @@ class FactorRunResult:
     meta_selected_sell_threshold: float
     meta_threshold_table: pd.DataFrame
     strategy_mode: str
+    barrier_mode: str
     take_profit_pct: float
     stop_loss_pct: float
+    atr_window: int
+    atr_take_profit_mult: float
+    atr_stop_loss_mult: float
     max_holding_days: int
 
 
@@ -156,6 +163,18 @@ def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     out["bias_20"] = (out["Close"] / out["ma_20"]) - 1
     out["vol_chg"] = out["Volume"].pct_change()
 
+    prev_close = out["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            out["High"] - out["Low"],
+            (out["High"] - prev_close).abs(),
+            (out["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    out["atr_14"] = true_range.rolling(14).mean()
+    out["atr_14_pct"] = out["atr_14"] / out["Close"]
+
     delta = out["Close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
@@ -181,6 +200,10 @@ def add_triple_barrier_target(
     take_profit_pct: float = 0.08,
     stop_loss_pct: float = 0.05,
     max_holding_days: int = 20,
+    barrier_mode: str = "atr",
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
+    atr_col: str = "atr_14",
 ) -> pd.DataFrame:
     out = df.copy()
     labels: list[float] = []
@@ -188,23 +211,47 @@ def add_triple_barrier_target(
     event_dates: list[pd.Timestamp | pd.NaT] = []
     event_returns: list[float] = []
     holding_days: list[float] = []
+    take_profit_pcts: list[float] = []
+    stop_loss_pcts: list[float] = []
     closes = out["Close"].to_numpy()
     highs = out["High"].to_numpy()
     lows = out["Low"].to_numpy()
+    atr_values = out[atr_col].to_numpy() if atr_col in out.columns else np.full(len(out), np.nan)
     index = out.index
 
     for i in range(len(out)):
+        entry_price = closes[i]
+        entry_atr = atr_values[i]
+        if barrier_mode == "atr":
+            if not np.isfinite(entry_atr) or entry_atr <= 0 or not np.isfinite(entry_price) or entry_price <= 0:
+                labels.append(np.nan)
+                events.append(None)
+                event_dates.append(pd.NaT)
+                event_returns.append(np.nan)
+                holding_days.append(np.nan)
+                take_profit_pcts.append(np.nan)
+                stop_loss_pcts.append(np.nan)
+                continue
+            upper = entry_price + atr_take_profit_mult * entry_atr
+            lower = entry_price - atr_stop_loss_mult * entry_atr
+            row_take_profit_pct = (upper / entry_price) - 1.0
+            row_stop_loss_pct = 1.0 - (lower / entry_price)
+        else:
+            upper = entry_price * (1.0 + take_profit_pct)
+            lower = entry_price * (1.0 - stop_loss_pct)
+            row_take_profit_pct = take_profit_pct
+            row_stop_loss_pct = stop_loss_pct
+
         if i + max_holding_days >= len(out):
             labels.append(np.nan)
             events.append(None)
             event_dates.append(pd.NaT)
             event_returns.append(np.nan)
             holding_days.append(np.nan)
+            take_profit_pcts.append(row_take_profit_pct)
+            stop_loss_pcts.append(row_stop_loss_pct)
             continue
 
-        entry_price = closes[i]
-        upper = entry_price * (1.0 + take_profit_pct)
-        lower = entry_price * (1.0 - stop_loss_pct)
         label = 0
         event = "vertical_barrier"
         event_idx = i + max_holding_days
@@ -228,6 +275,8 @@ def add_triple_barrier_target(
         event_dates.append(index[event_idx])
         event_returns.append(float(closes[event_idx] / entry_price - 1.0))
         holding_days.append(float(event_idx - i))
+        take_profit_pcts.append(float(row_take_profit_pct))
+        stop_loss_pcts.append(float(row_stop_loss_pct))
 
     out["tb_label"] = labels
     out["target"] = out["tb_label"]
@@ -235,6 +284,8 @@ def add_triple_barrier_target(
     out["tb_event_date"] = event_dates
     out["tb_event_return"] = event_returns
     out["tb_holding_days"] = holding_days
+    out["tb_take_profit_pct"] = take_profit_pcts
+    out["tb_stop_loss_pct"] = stop_loss_pcts
     return out
 
 
@@ -476,7 +527,7 @@ def get_factor_model() -> object:
     return Pipeline(
         steps=[
             ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(max_iter=2000, random_state=42)),
+            ("clf", LogisticRegression(max_iter=2000, random_state=42, class_weight="balanced")),
         ]
     )
 
@@ -486,6 +537,7 @@ def get_tree_factor_model() -> object:
         n_estimators=300,
         max_depth=5,
         min_samples_leaf=8,
+        class_weight="balanced",
         random_state=42,
     )
 
@@ -500,6 +552,55 @@ def positive_class_proba(model, X: pd.DataFrame) -> np.ndarray:
 
 def _has_usable_columns(df: pd.DataFrame, cols: list[str]) -> bool:
     return all(col in df.columns for col in cols) and not df[cols].isna().all().all()
+
+
+def event_importance_weights(clean_df: pd.DataFrame) -> pd.Series:
+    """Weight large realized Triple Barrier events more heavily during fitting."""
+    if "tb_event_return" not in clean_df.columns:
+        return pd.Series(1.0, index=clean_df.index)
+
+    abs_event_return = clean_df["tb_event_return"].abs().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    if abs_event_return.max() <= 0:
+        return pd.Series(1.0, index=clean_df.index)
+
+    # Percentile weighting keeps a few extreme trades important without letting one outlier dominate fitting.
+    event_rank = abs_event_return.rank(pct=True).clip(0.0, 1.0)
+    direction_weight = clean_df["target"].ne(0).astype(float) * 0.5
+    weights = 1.0 + 4.0 * event_rank + direction_weight
+    return weights.clip(1.0, 6.0)
+
+
+def binary_probability_metrics(y_true: pd.Series, y_score: pd.Series, sample_weight: pd.Series | None = None) -> dict[str, float]:
+    y_binary = (y_true == 1).astype(int)
+    positive_rate = float(y_binary.mean()) if len(y_binary) else np.nan
+    if len(y_binary) == 0 or y_binary.nunique() < 2:
+        return {
+            "validation_roc_auc": np.nan,
+            "validation_weighted_roc_auc": np.nan,
+            "validation_average_precision": np.nan,
+            "validation_positive_rate": positive_rate,
+        }
+
+    aligned_weight = sample_weight.reindex(y_binary.index).fillna(1.0) if sample_weight is not None else None
+    try:
+        roc_auc = float(roc_auc_score(y_binary, y_score))
+    except ValueError:
+        roc_auc = np.nan
+    try:
+        weighted_roc_auc = float(roc_auc_score(y_binary, y_score, sample_weight=aligned_weight))
+    except ValueError:
+        weighted_roc_auc = np.nan
+    try:
+        average_precision = float(average_precision_score(y_binary, y_score, sample_weight=aligned_weight))
+    except ValueError:
+        average_precision = np.nan
+
+    return {
+        "validation_roc_auc": roc_auc,
+        "validation_weighted_roc_auc": weighted_roc_auc,
+        "validation_average_precision": average_precision,
+        "validation_positive_rate": positive_rate,
+    }
 
 
 def fit_predict_factor(
@@ -521,10 +622,20 @@ def fit_predict_factor(
             },
             index=all_eval.index,
         )
-        return score, {"factor": factor_name, "status": "neutral", "validation_auc_proxy": np.nan}
+        return score, {
+            "factor": factor_name,
+            "status": "neutral",
+            "validation_roc_auc": np.nan,
+            "validation_weighted_roc_auc": np.nan,
+            "validation_average_precision": np.nan,
+            "validation_positive_rate": np.nan,
+            "train_weight_mean": np.nan,
+            "train_weight_max": np.nan,
+        }
 
-    train_clean = train_df[feature_cols + ["target"]].replace([np.inf, -np.inf], np.nan).dropna()
-    val_clean = val_df[feature_cols + ["target"]].replace([np.inf, -np.inf], np.nan).dropna()
+    label_cols = ["target"] + (["tb_event_return"] if "tb_event_return" in train_df.columns else [])
+    train_clean = train_df[feature_cols + label_cols].replace([np.inf, -np.inf], np.nan).dropna()
+    val_clean = val_df[feature_cols + label_cols].replace([np.inf, -np.inf], np.nan).dropna()
     if len(train_clean) < 50 or len(val_clean) < 20 or train_clean["target"].nunique() < 2:
         score = pd.DataFrame(
             {
@@ -533,12 +644,27 @@ def fit_predict_factor(
             },
             index=all_eval.index,
         )
-        return score, {"factor": factor_name, "status": "neutral_insufficient_data", "validation_auc_proxy": np.nan}
+        return score, {
+            "factor": factor_name,
+            "status": "neutral_insufficient_data",
+            "validation_roc_auc": np.nan,
+            "validation_weighted_roc_auc": np.nan,
+            "validation_average_precision": np.nan,
+            "validation_positive_rate": np.nan,
+            "train_weight_mean": np.nan,
+            "train_weight_max": np.nan,
+        }
 
     model = get_tree_factor_model() if factor_name in {"fundamental", "chip"} else get_factor_model()
-    model.fit(train_clean[feature_cols], train_clean["target"])
+    train_weights = event_importance_weights(train_clean)
+    if isinstance(model, Pipeline):
+        model.fit(train_clean[feature_cols], train_clean["target"], clf__sample_weight=train_weights)
+    else:
+        model.fit(train_clean[feature_cols], train_clean["target"], sample_weight=train_weights)
 
     val_raw = pd.Series(positive_class_proba(model, val_clean[feature_cols]), index=val_clean.index)
+    val_weights = event_importance_weights(val_clean)
+    validation_metrics = binary_probability_metrics(val_clean["target"], val_raw, val_weights)
     eval_features = all_eval[feature_cols].replace([np.inf, -np.inf], np.nan).ffill().bfill()
     eval_raw = pd.Series(positive_class_proba(model, eval_features), index=all_eval.index)
     eval_score = percentile_score(eval_raw, val_raw)
@@ -550,7 +676,14 @@ def fit_predict_factor(
         },
         index=all_eval.index,
     )
-    return score, {"factor": factor_name, "status": "model", "validation_raw_mean": float(val_raw.mean())}
+    return score, {
+        "factor": factor_name,
+        "status": "model",
+        "validation_raw_mean": float(val_raw.mean()),
+        "train_weight_mean": float(train_weights.mean()),
+        "train_weight_max": float(train_weights.max()),
+        **validation_metrics,
+    }
 
 
 def factor_data_summary(
@@ -635,6 +768,10 @@ def run_score_backtest(
     take_profit_pct: float = 0.08,
     stop_loss_pct: float = 0.05,
     max_holding_days: int = 20,
+    barrier_mode: str = "atr",
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
+    atr_col: str = "atr_14",
 ) -> pd.DataFrame:
     bt = df.loc[score_df.index].copy()
     bt = bt.join(score_df, how="left")
@@ -654,18 +791,23 @@ def run_score_backtest(
     highs = bt["High"].to_numpy()
     lows = bt["Low"].to_numpy()
     closes = bt["Close"].to_numpy()
+    atr_values = bt[atr_col].to_numpy() if atr_col in bt.columns else np.full(len(bt), np.nan)
     positions = []
     targets = []
     events = []
     held_days = []
+    entry_tp_history = []
+    entry_sl_history = []
     exit_threshold = threshold if sell_threshold is None else sell_threshold
+    entry_take_profit_pct = take_profit_pct
+    entry_stop_loss_pct = stop_loss_pct
 
     for i, score in enumerate(scores):
         event = ""
         if position == 1.0:
             days_held = i - entry_pos
-            hit_stop = lows[i] <= entry_price * (1.0 - stop_loss_pct)
-            hit_profit = highs[i] >= entry_price * (1.0 + take_profit_pct)
+            hit_stop = lows[i] <= entry_price * (1.0 - entry_stop_loss_pct)
+            hit_profit = highs[i] >= entry_price * (1.0 + entry_take_profit_pct)
             hit_time = days_held >= max_holding_days
             hit_model_exit = strategy_mode == "hysteresis" and score <= exit_threshold
             if hit_stop:
@@ -685,12 +827,20 @@ def run_score_backtest(
             position = 1.0
             entry_price = closes[i]
             entry_pos = i
+            if barrier_mode == "atr" and np.isfinite(atr_values[i]) and atr_values[i] > 0 and entry_price > 0:
+                entry_take_profit_pct = float((atr_take_profit_mult * atr_values[i]) / entry_price)
+                entry_stop_loss_pct = float((atr_stop_loss_mult * atr_values[i]) / entry_price)
+            else:
+                entry_take_profit_pct = take_profit_pct
+                entry_stop_loss_pct = stop_loss_pct
             event = "entry"
 
         targets.append(position)
         positions.append(position)
         events.append(event)
         held_days.append(float(i - entry_pos) if position == 1.0 else 0.0)
+        entry_tp_history.append(float(entry_take_profit_pct) if position == 1.0 else np.nan)
+        entry_sl_history.append(float(entry_stop_loss_pct) if position == 1.0 else np.nan)
 
     bt["target_position"] = targets
     bt["position"] = pd.Series(positions, index=bt.index).shift(1).fillna(0.0)
@@ -698,6 +848,15 @@ def run_score_backtest(
     bt["tb_days_held_live"] = held_days
     bt["take_profit_pct"] = take_profit_pct
     bt["stop_loss_pct"] = stop_loss_pct
+    bt["barrier_mode"] = barrier_mode
+    bt["atr_take_profit_mult"] = atr_take_profit_mult
+    bt["atr_stop_loss_mult"] = atr_stop_loss_mult
+    bt["entry_take_profit_pct"] = entry_tp_history
+    bt["entry_stop_loss_pct"] = entry_sl_history
+    if "tb_take_profit_pct" in bt.columns:
+        bt["current_take_profit_pct"] = bt["tb_take_profit_pct"]
+    if "tb_stop_loss_pct" in bt.columns:
+        bt["current_stop_loss_pct"] = bt["tb_stop_loss_pct"]
     bt["max_holding_days"] = max_holding_days
     bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"])
     bt["cost"] = bt["position_chg"] * (cost_bps / 10000.0)
@@ -756,6 +915,9 @@ def choose_final_threshold(
     take_profit_pct: float,
     stop_loss_pct: float,
     max_holding_days: int,
+    barrier_mode: str = "atr",
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_threshold = threshold_min
@@ -771,6 +933,9 @@ def choose_final_threshold(
             take_profit_pct=take_profit_pct,
             stop_loss_pct=stop_loss_pct,
             max_holding_days=max_holding_days,
+            barrier_mode=barrier_mode,
+            atr_take_profit_mult=atr_take_profit_mult,
+            atr_stop_loss_mult=atr_stop_loss_mult,
         )
         d = diagnostics(bt)
         rows.append(
@@ -799,6 +964,9 @@ def choose_hysteresis_thresholds(
     take_profit_pct: float,
     stop_loss_pct: float,
     max_holding_days: int,
+    barrier_mode: str = "atr",
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_buy_threshold = threshold_min
@@ -819,6 +987,9 @@ def choose_hysteresis_thresholds(
                 take_profit_pct=take_profit_pct,
                 stop_loss_pct=stop_loss_pct,
                 max_holding_days=max_holding_days,
+                barrier_mode=barrier_mode,
+                atr_take_profit_mult=atr_take_profit_mult,
+                atr_stop_loss_mult=atr_stop_loss_mult,
             )
             d = diagnostics(bt)
             rows.append(
@@ -858,6 +1029,9 @@ def run_meta_model_strategy(
     take_profit_pct: float,
     stop_loss_pct: float,
     max_holding_days: int,
+    barrier_mode: str = "atr",
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
 ) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, float, pd.DataFrame]:
     meta_train_idx, meta_val_idx = split_validation_for_meta(val_df)
     meta_train = score_df.loc[meta_train_idx, META_SCORE_COLS].join(df["target"]).dropna()
@@ -876,6 +1050,9 @@ def run_meta_model_strategy(
             take_profit_pct=take_profit_pct,
             stop_loss_pct=stop_loss_pct,
             max_holding_days=max_holding_days,
+            barrier_mode=barrier_mode,
+            atr_take_profit_mult=atr_take_profit_mult,
+            atr_stop_loss_mult=atr_stop_loss_mult,
         )
         summary = pd.DataFrame(
             [{"item": "meta_model_status", "value": "neutral_insufficient_validation_data"}]
@@ -909,6 +1086,9 @@ def run_meta_model_strategy(
             take_profit_pct=take_profit_pct,
             stop_loss_pct=stop_loss_pct,
             max_holding_days=max_holding_days,
+            barrier_mode=barrier_mode,
+            atr_take_profit_mult=atr_take_profit_mult,
+            atr_stop_loss_mult=atr_stop_loss_mult,
         )
     else:
         selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
@@ -921,6 +1101,9 @@ def run_meta_model_strategy(
             take_profit_pct=take_profit_pct,
             stop_loss_pct=stop_loss_pct,
             max_holding_days=max_holding_days,
+            barrier_mode=barrier_mode,
+            atr_take_profit_mult=atr_take_profit_mult,
+            atr_stop_loss_mult=atr_stop_loss_mult,
         )
 
     test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
@@ -941,6 +1124,9 @@ def run_meta_model_strategy(
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
         max_holding_days=max_holding_days,
+        barrier_mode=barrier_mode,
+        atr_take_profit_mult=atr_take_profit_mult,
+        atr_stop_loss_mult=atr_stop_loss_mult,
     )
 
     clf = model.named_steps["clf"]
@@ -1016,8 +1202,12 @@ def run_multi_factor_pipeline(
     fundamental_weight: float = 0.4,
     chip_weight: float = 0.4,
     strategy_mode: str = "single_threshold",
+    barrier_mode: str = "atr",
     take_profit_pct: float = 0.08,
     stop_loss_pct: float = 0.05,
+    atr_window: int = 14,
+    atr_take_profit_mult: float = 2.0,
+    atr_stop_loss_mult: float = 1.0,
     max_holding_days: int = 20,
 ) -> FactorRunResult:
     notes: list[str] = []
@@ -1075,12 +1265,19 @@ def run_multi_factor_pipeline(
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
         max_holding_days=max_holding_days,
+        barrier_mode=barrier_mode,
+        atr_take_profit_mult=atr_take_profit_mult,
+        atr_stop_loss_mult=atr_stop_loss_mult,
+        atr_col=f"atr_{atr_window}",
     ).replace([np.inf, -np.inf], np.nan)
     df = df.dropna(subset=TECHNICAL_COLS + ["target"]).copy()
     label_counts = df["target"].value_counts(dropna=True).sort_index().to_dict()
     notes.append(
         "Triple Barrier labels applied: "
-        f"take_profit={take_profit_pct:.2%}, stop_loss={stop_loss_pct:.2%}, "
+        f"barrier_mode={barrier_mode}, "
+        f"fixed_take_profit={take_profit_pct:.2%}, fixed_stop_loss={stop_loss_pct:.2%}, "
+        f"atr_window={atr_window}, atr_take_profit_mult={atr_take_profit_mult:.2f}, "
+        f"atr_stop_loss_mult={atr_stop_loss_mult:.2f}, "
         f"max_holding_days={max_holding_days}, label_counts={label_counts}."
     )
 
@@ -1115,6 +1312,9 @@ def run_multi_factor_pipeline(
                 take_profit_pct=take_profit_pct,
                 stop_loss_pct=stop_loss_pct,
                 max_holding_days=max_holding_days,
+                barrier_mode=barrier_mode,
+                atr_take_profit_mult=atr_take_profit_mult,
+                atr_stop_loss_mult=atr_stop_loss_mult,
             )
         else:
             selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
@@ -1127,6 +1327,9 @@ def run_multi_factor_pipeline(
                 take_profit_pct=take_profit_pct,
                 stop_loss_pct=stop_loss_pct,
                 max_holding_days=max_holding_days,
+                barrier_mode=barrier_mode,
+                atr_take_profit_mult=atr_take_profit_mult,
+                atr_stop_loss_mult=atr_stop_loss_mult,
             )
     backtest_df = run_score_backtest(
         df,
@@ -1138,6 +1341,9 @@ def run_multi_factor_pipeline(
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
         max_holding_days=max_holding_days,
+        barrier_mode=barrier_mode,
+        atr_take_profit_mult=atr_take_profit_mult,
+        atr_stop_loss_mult=atr_stop_loss_mult,
     )
     backtest_df = add_feature_percentiles(backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_sell_threshold, meta_threshold_table = run_meta_model_strategy(
@@ -1154,6 +1360,9 @@ def run_multi_factor_pipeline(
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
         max_holding_days=max_holding_days,
+        barrier_mode=barrier_mode,
+        atr_take_profit_mult=atr_take_profit_mult,
+        atr_stop_loss_mult=atr_stop_loss_mult,
     )
     meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     weighted_d = diagnostics(backtest_df)
@@ -1187,7 +1396,11 @@ def run_multi_factor_pipeline(
         meta_selected_sell_threshold=meta_sell_threshold,
         meta_threshold_table=meta_threshold_table,
         strategy_mode=strategy_mode,
+        barrier_mode=barrier_mode,
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
+        atr_window=atr_window,
+        atr_take_profit_mult=atr_take_profit_mult,
+        atr_stop_loss_mult=atr_stop_loss_mult,
         max_holding_days=max_holding_days,
     )
