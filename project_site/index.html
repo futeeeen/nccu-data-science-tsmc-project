@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>台積電股價預測與交易策略分析系統 | Interactive Project Brief</title>
+  <meta
+    name="description"
+    content="台積電股價預測與交易策略分析系統：技術面、多因子與 Triple Barrier 策略的互動式專案介紹。"
+  />
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --surface: #ffffff;
+      --surface-soft: #eef4ff;
+      --ink: #152033;
+      --muted: #667085;
+      --line: #d9e1ec;
+      --accent: #1f7ae0;
+      --accent-2: #15a674;
+      --accent-3: #ef7a32;
+      --danger: #d34a4a;
+      --shadow: 0 24px 80px rgba(26, 38, 64, 0.12);
+      --radius: 8px;
+      color-scheme: light;
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(31, 122, 224, 0.08), transparent 22rem),
+        var(--bg);
+      letter-spacing: 0;
+      overflow-x: hidden;
+    }
+
+    body.presentation section {
+      min-height: 100vh;
+      display: grid;
+      align-content: center;
+      scroll-margin-top: 0;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.8rem clamp(1rem, 4vw, 4rem);
+      background: rgba(247, 248, 251, 0.9);
+      border-bottom: 1px solid rgba(217, 225, 236, 0.92);
+      backdrop-filter: blur(16px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      min-width: 0;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2.2rem;
+      height: 2.2rem;
+      border-radius: 50%;
+      background: #111827;
+      color: #fff;
+      font-size: 0.78rem;
+      letter-spacing: 0;
+      flex: 0 0 auto;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 0.2rem;
+    }
+
+    .nav a,
+    .nav button {
+      border: 0;
+      background: transparent;
+      padding: 0.55rem 0.75rem;
+      border-radius: 999px;
+      color: #475467;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .nav a.active,
+    .nav a:hover,
+    .nav button:hover {
+      color: #0f172a;
+      background: #e9eef7;
+    }
+
+    main {
+      overflow: hidden;
+    }
+
+    section {
+      scroll-margin-top: 5.5rem;
+      padding: clamp(4rem, 9vw, 7.5rem) clamp(1rem, 4vw, 4rem);
+    }
+
+    .section-inner {
+      width: min(100%, 1180px);
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 1rem;
+      color: var(--accent);
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 850px;
+      font-size: clamp(2.45rem, 7vw, 5.9rem);
+      line-height: 0.98;
+      margin-bottom: 1.2rem;
+      letter-spacing: 0;
+    }
+
+    h1 span {
+      display: block;
+    }
+
+    h2 {
+      max-width: 760px;
+      font-size: clamp(2rem, 4vw, 3.7rem);
+      line-height: 1.05;
+      margin-bottom: 1rem;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      line-height: 1.35;
+      margin-bottom: 0.5rem;
+    }
+
+    .lead {
+      max-width: 760px;
+      color: #4b5565;
+      font-size: clamp(1.05rem, 1.7vw, 1.25rem);
+      line-height: 1.8;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+      gap: clamp(2rem, 5vw, 4rem);
+      align-items: center;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+      margin: 2rem 0;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2.85rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+      color: #172033;
+      font-weight: 800;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .stat-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+      max-width: 720px;
+    }
+
+    .stat {
+      padding: 1rem;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .stat b {
+      display: block;
+      font-size: 1.5rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .dashboard {
+      position: relative;
+      background: #fff;
+      border: 1px solid #cdd7e4;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .window-bar {
+      display: flex;
+      gap: 0.45rem;
+      align-items: center;
+      height: 2.6rem;
+      padding: 0 1rem;
+      background: #f4f7fb;
+      border-bottom: 1px solid #dbe3ee;
+    }
+
+    .dot {
+      width: 0.62rem;
+      height: 0.62rem;
+      border-radius: 50%;
+      background: #cbd5e1;
+    }
+
+    .dot:nth-child(1) {
+      background: #ef6461;
+    }
+
+    .dot:nth-child(2) {
+      background: #f5b849;
+    }
+
+    .dot:nth-child(3) {
+      background: #49b86f;
+    }
+
+    .dash-body {
+      padding: 1.1rem;
+    }
+
+    .dash-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      align-items: flex-start;
+    }
+
+    .dash-title strong {
+      display: block;
+      font-size: 1.15rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.28rem 0.65rem;
+      border-radius: 999px;
+      background: #e8f2ff;
+      color: #145ca8;
+      font-size: 0.82rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .score-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.7rem;
+      margin: 1rem 0;
+    }
+
+    .score {
+      border: 1px solid #e1e7f0;
+      border-radius: var(--radius);
+      padding: 0.8rem;
+      background: #fbfdff;
+    }
+
+    .score span {
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .score b {
+      display: block;
+      font-size: 1.55rem;
+      margin: 0.2rem 0 0.5rem;
+    }
+
+    .meter {
+      height: 0.5rem;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+
+    .meter i {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      border-radius: inherit;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 170px;
+      border: 1px solid #e1e7f0;
+      border-radius: var(--radius);
+      background: #fbfdff;
+    }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.7rem;
+      margin-top: 0.8rem;
+    }
+
+    .signal {
+      padding: 0.9rem;
+      border-radius: var(--radius);
+      background: #f6f8fb;
+      border: 1px solid #e1e7f0;
+    }
+
+    .signal b {
+      display: block;
+      color: #111827;
+    }
+
+    .signal span {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .problem-grid,
+    .strategy-grid,
+    .architecture-grid,
+    .closing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.06);
+    }
+
+    .card-num {
+      display: block;
+      color: var(--accent);
+      font-weight: 900;
+      margin-bottom: 1.2rem;
+    }
+
+    .card p,
+    .module p,
+    .scenario-detail p {
+      color: var(--muted);
+      line-height: 1.75;
+      margin-bottom: 0;
+    }
+
+    .journey {
+      margin-top: 2rem;
+      display: grid;
+      grid-template-columns: 0.85fr 1.15fr;
+      gap: 1.2rem;
+      align-items: start;
+    }
+
+    .step-list {
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .step-button {
+      width: 100%;
+      text-align: left;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .step-button strong {
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+
+    .step-button span {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .step-button.active {
+      border-color: #9ec7ff;
+      background: #eef6ff;
+      box-shadow: inset 4px 0 0 var(--accent);
+    }
+
+    .journey-panel {
+      min-height: 330px;
+      background: #111827;
+      color: #fff;
+      border-radius: var(--radius);
+      padding: clamp(1.25rem, 3vw, 2rem);
+      box-shadow: var(--shadow);
+    }
+
+    .journey-panel .tag {
+      display: inline-flex;
+      padding: 0.25rem 0.55rem;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 999px;
+      color: #b7c8df;
+      font-size: 0.82rem;
+      margin-bottom: 1rem;
+    }
+
+    .journey-panel p {
+      color: #cdd6e4;
+      line-height: 1.75;
+    }
+
+    .panel-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.7rem;
+      margin-top: 1.2rem;
+    }
+
+    .panel-metrics div {
+      padding: 0.9rem;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .panel-metrics b {
+      display: block;
+      font-size: 1.4rem;
+    }
+
+    .panel-metrics span {
+      color: #b7c8df;
+      font-size: 0.84rem;
+    }
+
+    .strategy-card {
+      cursor: pointer;
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .strategy-card:hover,
+    .strategy-card.active {
+      transform: translateY(-3px);
+      border-color: #9ec7ff;
+    }
+
+    .strategy-card .label {
+      display: inline-flex;
+      padding: 0.25rem 0.5rem;
+      border-radius: 999px;
+      background: #eef6ff;
+      color: #145ca8;
+      font-size: 0.78rem;
+      font-weight: 800;
+      margin-bottom: 0.8rem;
+    }
+
+    .architecture-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .module {
+      position: relative;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.1rem;
+    }
+
+    .module::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -1rem;
+      width: 1rem;
+      border-top: 1px solid #bac7d9;
+    }
+
+    .module:last-child::after {
+      display: none;
+    }
+
+    .demo-box {
+      margin-top: 2rem;
+      display: grid;
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 1rem;
+      align-items: stretch;
+    }
+
+    .controls {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.2rem;
+    }
+
+    .control-row {
+      display: grid;
+      gap: 0.55rem;
+      margin-bottom: 1.2rem;
+    }
+
+    .control-row label {
+      font-weight: 800;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .scenario-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin: 1rem 0;
+    }
+
+    .chip {
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+      padding: 0.55rem 0.75rem;
+      cursor: pointer;
+      color: #344054;
+      font-weight: 800;
+    }
+
+    .chip.active {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
+    .scenario-detail {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: var(--radius);
+      padding: 1.2rem;
+    }
+
+    .score-preview {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.7rem;
+      margin-top: 1rem;
+    }
+
+    .preview-cell {
+      background: #f6f8fb;
+      border: 1px solid #e1e7f0;
+      border-radius: var(--radius);
+      padding: 0.9rem;
+    }
+
+    .preview-cell b {
+      display: block;
+      font-size: 1.6rem;
+    }
+
+    .preview-cell span {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .closing-grid {
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+    }
+
+    .command-list {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    code {
+      display: block;
+      padding: 0.8rem;
+      border-radius: var(--radius);
+      background: #111827;
+      color: #d7e3f5;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .pager {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      z-index: 25;
+      display: flex;
+      gap: 0.35rem;
+      padding: 0.45rem;
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      backdrop-filter: blur(14px);
+    }
+
+    .pager a {
+      width: 0.72rem;
+      height: 0.72rem;
+      border-radius: 50%;
+      background: #cbd5e1;
+    }
+
+    .pager a.active {
+      background: #111827;
+    }
+
+    @media (max-width: 980px) {
+      .nav a {
+        display: none;
+      }
+
+      .hero-grid,
+      .journey,
+      .demo-box,
+      .closing-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .problem-grid,
+      .strategy-grid,
+      .architecture-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .module::after {
+        display: none;
+      }
+
+      .stat-strip,
+      .score-row,
+      .panel-metrics,
+      .signal-grid,
+      .score-preview {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .nav button {
+        display: none;
+      }
+
+      section {
+        padding-left: 1rem;
+        padding-right: 1.25rem;
+      }
+
+      h1 {
+        font-size: 2.05rem;
+        line-height: 1.08;
+        max-width: 100%;
+        word-break: break-all;
+        overflow-wrap: anywhere;
+      }
+
+      .lead {
+        font-size: 1rem;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+
+      .section-inner {
+        width: 100%;
+        max-width: calc(100vw - 4rem);
+        margin-left: 0;
+        margin-right: auto;
+      }
+
+      .topbar {
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+
+      .brand span:last-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .dashboard {
+        margin-left: -0.15rem;
+        margin-right: 0;
+        max-width: 100%;
+      }
+
+      .dash-title .pill {
+        display: none;
+      }
+
+      .card,
+      .controls,
+      .scenario-detail,
+      .journey-panel,
+      .module {
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#hero" aria-label="回到首頁">
+      <span class="brand-mark">TSMC</span>
+      <span>Stock Strategy Lab</span>
+    </a>
+    <nav class="nav" aria-label="Section navigation">
+      <a href="#why">痛點</a>
+      <a href="#journey">流程</a>
+      <a href="#strategies">策略</a>
+      <a href="#architecture">架構</a>
+      <a href="#demo">互動 Demo</a>
+      <button id="presentationToggle" type="button">簡報模式</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="hero">
+      <div class="section-inner hero-grid">
+        <div>
+          <p class="eyebrow">Data-science ready TSMC strategy research</p>
+          <h1>
+            <span>把台積電股價研究，</span>
+            <span>變成可比較、可解釋、</span>
+            <span>可回測的策略實驗室。</span>
+          </h1>
+          <p class="lead">
+            專案將技術指標、基本面 EPS、籌碼資料與 Triple Barrier 金融機器學習標籤整合成三個互動式儀表板，
+            用時間序切分、模型分數、門檻搜尋與回測結果，協助判斷策略是否真的比買進持有更有意義。
+          </p>
+          <div class="actions">
+            <a class="btn primary" href="#demo">開始互動導覽</a>
+            <a class="btn" href="https://nccu-data-science-tsmc-project.streamlit.app/" target="_blank" rel="noreferrer">開啟 Streamlit App</a>
+            <a class="btn" href="https://github.com/futeeeen/nccu-data-science-tsmc-project" target="_blank" rel="noreferrer">GitHub Repo</a>
+          </div>
+          <div class="stat-strip" aria-label="Project highlights">
+            <div class="stat">
+              <b>3</b>
+              <span>策略版本並行比較</span>
+            </div>
+            <div class="stat">
+              <b>0-100</b>
+              <span>因子分數校正尺度</span>
+            </div>
+            <div class="stat">
+              <b>ATR</b>
+              <span>動態 Triple Barrier 門檻</span>
+            </div>
+          </div>
+        </div>
+
+        <aside class="dashboard" aria-label="Dashboard preview">
+          <div class="window-bar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="dash-body">
+            <div class="dash-title">
+              <div>
+                <strong>TSMC Strategy Cockpit</strong>
+                <span class="muted">2330.TW | train / validation / test</span>
+              </div>
+              <span class="pill">Triple Barrier</span>
+            </div>
+            <div class="score-row">
+              <div class="score">
+                <span>Technical</span>
+                <b>74</b>
+                <div class="meter"><i style="width: 74%"></i></div>
+              </div>
+              <div class="score">
+                <span>Fundamental</span>
+                <b>68</b>
+                <div class="meter"><i style="width: 68%"></i></div>
+              </div>
+              <div class="score">
+                <span>Chip</span>
+                <b>41</b>
+                <div class="meter"><i style="width: 41%"></i></div>
+              </div>
+            </div>
+            <canvas id="heroChart" width="720" height="260" aria-label="Equity curve preview"></canvas>
+            <div class="signal-grid">
+              <div class="signal">
+                <b>Meta model</b>
+                <span>用三個因子分數學習關鍵行情關係</span>
+              </div>
+              <div class="signal">
+                <b>Glossary</b>
+                <span>即時查詢 Sharpe、AUC、tb_event 等定義</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="why">
+      <div class="section-inner">
+        <p class="eyebrow">Why it matters</p>
+        <h2>股價模型不只要猜漲跌，更要知道什麼時候值得進場。</h2>
+        <p class="lead">
+          單純提高 Accuracy 不一定能避開關鍵跌勢，也不一定能抓到波段行情。這個專案把「資料來源、訓練標籤、模型分數、交易規則」放在同一個畫面裡檢查。
+        </p>
+        <div class="problem-grid">
+          <article class="card">
+            <span class="card-num">01</span>
+            <h3>模型可能只學到平庸盤整</h3>
+            <p>如果大多數日子都沒有明顯趨勢，模型可能把不進場預測得很好，卻錯過真正影響績效的轉折點。</p>
+          </article>
+          <article class="card">
+            <span class="card-num">02</span>
+            <h3>資料面向會互相衝突</h3>
+            <p>技術面、基本面與籌碼面可能同時給出不同訊號，所以需要拆開看，再決定如何加權或交給 Meta model 學習。</p>
+          </article>
+          <article class="card">
+            <span class="card-num">03</span>
+            <h3>回測績效需要被拆解</h3>
+            <p>總報酬、Sharpe、最大回撤、holding ratio 與 entry count 要一起看，才知道策略是有選擇性還是接近買進持有。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="journey">
+      <div class="section-inner">
+        <p class="eyebrow">Product journey</p>
+        <h2>從資料取得到交易訊號，每一步都能回頭檢查。</h2>
+        <div class="journey">
+          <div class="step-list" role="tablist" aria-label="Project workflow">
+            <button class="step-button active" type="button" data-step="data">
+              <strong>01 資料層</strong>
+              <span>Yahoo Finance / FinMind / CSV</span>
+            </button>
+            <button class="step-button" type="button" data-step="features">
+              <strong>02 特徵工程</strong>
+              <span>技術、基本面、籌碼與 ATR</span>
+            </button>
+            <button class="step-button" type="button" data-step="models">
+              <strong>03 監督式學習</strong>
+              <span>子模型、Meta model、時間序切分</span>
+            </button>
+            <button class="step-button" type="button" data-step="backtest">
+              <strong>04 策略回測</strong>
+              <span>門檻搜尋、成本、風控出場</span>
+            </button>
+          </div>
+          <article class="journey-panel" id="journeyPanel">
+            <span class="tag">Data pipeline</span>
+            <h3>價格、EPS、三大法人與融券資料進入同一條時間線。</h3>
+            <p>價格資料提供 OHLCV，FinMind 或 CSV 補上 EPS 與籌碼流向；基本面會依財報可取得日期對齊，降低未來資訊滲漏。</p>
+            <div class="panel-metrics">
+              <div><b>OHLCV</b><span>價格與成交量</span></div>
+              <div><b>EPS</b><span>基本面獲利</span></div>
+              <div><b>Chip</b><span>法人與信用交易</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="strategies">
+      <div class="section-inner">
+        <p class="eyebrow">Three strategy families</p>
+        <h2>同一個研究問題，分成三個可維護的策略版本。</h2>
+        <p class="lead">你可以把它想成由簡到繁的實驗階梯：先建立技術面 baseline，再加入多因子，最後用 Triple Barrier 對齊更接近交易目的的標籤。</p>
+        <div class="strategy-grid" id="strategyCards">
+          <article class="card strategy-card active" data-strategy="technical">
+            <span class="label">Baseline</span>
+            <h3>Technical Strategy</h3>
+            <p>只使用技術指標與多模型比較，適合當作最小可比較基準。</p>
+          </article>
+          <article class="card strategy-card" data-strategy="multi">
+            <span class="label">Deployed</span>
+            <h3>Multi-Factor Strategy</h3>
+            <p>加入 EPS 與籌碼資料，使用人工加權分數與 Meta model 對照。</p>
+          </article>
+          <article class="card strategy-card" data-strategy="triple">
+            <span class="label">Research</span>
+            <h3>Triple Barrier Strategy</h3>
+            <p>用 ATR 動態門檻與事件權重，讓模型更重視波段與關鍵轉折。</p>
+          </article>
+        </div>
+        <div class="scenario-detail" id="strategyDetail" style="margin-top: 1rem;">
+          <h3>Technical Strategy：先確認技術指標能不能形成穩定訊號。</h3>
+          <p>輸入 RSI、MACD、均線乖離、成交量變化等特徵，透過時間序 train / validation / test 切分評估模型與回測結果。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-inner">
+        <p class="eyebrow">Architecture</p>
+        <h2>架構上保持三個子專案獨立，但讓觀念與介面維持一致。</h2>
+        <div class="architecture-grid">
+          <article class="module">
+            <h3>Data adapters</h3>
+            <p>下載價格、讀取 FinMind、接收手動 CSV，上雲時支援 Streamlit secrets token。</p>
+          </article>
+          <article class="module">
+            <h3>Feature engine</h3>
+            <p>產生技術、基本面、籌碼、ATR 與 Triple Barrier event 欄位。</p>
+          </article>
+          <article class="module">
+            <h3>Model layer</h3>
+            <p>子模型輸出 raw probability，再以 validation percentile 校正成 0-100 分數。</p>
+          </article>
+          <article class="module">
+            <h3>Dashboard</h3>
+            <p>提供架構圖、訓練資料、Glossary、策略比較、訊號下載與回測圖表。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="section-inner">
+        <p class="eyebrow">Interactive demo</p>
+        <h2>調整策略假設，看看訊號如何改變。</h2>
+        <p class="lead">這裡是介紹頁的小型互動模型，不取代正式 Streamlit 回測；它用來快速理解不同策略版本的設計差異。</p>
+        <div class="demo-box">
+          <div class="controls">
+            <div class="control-row">
+              <label for="thresholdRange">進場門檻 <span id="thresholdValue">60</span></label>
+              <input id="thresholdRange" type="range" min="40" max="85" step="1" value="60" />
+            </div>
+            <div class="control-row">
+              <label for="atrRange">ATR 停利倍數 <span id="atrValue">2.0</span></label>
+              <input id="atrRange" type="range" min="1" max="4" step="0.25" value="2" />
+            </div>
+            <div>
+              <label>情境</label>
+              <div class="scenario-tabs">
+                <button class="chip active" type="button" data-scenario="breakout">波動收斂後突破</button>
+                <button class="chip" type="button" data-scenario="pullback">籌碼轉弱回檔</button>
+                <button class="chip" type="button" data-scenario="neutral">盤整觀望</button>
+              </div>
+            </div>
+          </div>
+          <article class="scenario-detail">
+            <h3 id="scenarioTitle">波動收斂後突破</h3>
+            <p id="scenarioText">ATR 動態屏障在冷清期會收窄，當分數跨過門檻時，模型更容易把小幅但有品質的突破納入候選訊號。</p>
+            <div class="score-preview">
+              <div class="preview-cell">
+                <b id="demoScore">72</b>
+                <span>final_score</span>
+              </div>
+              <div class="preview-cell">
+                <b id="demoDecision">BUY</b>
+                <span>target_position</span>
+              </div>
+              <div class="preview-cell">
+                <b id="demoBarrier">2.0x</b>
+                <span>take-profit ATR</span>
+              </div>
+              <div class="preview-cell">
+                <b id="demoRisk">中等</b>
+                <span>drawdown pressure</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="closing">
+      <div class="section-inner closing-grid">
+        <div>
+          <p class="eyebrow">Run the project</p>
+          <h2>真正的模型、資料與回測，都在 Streamlit 儀表板裡。</h2>
+          <p class="lead">介紹頁負責快速理解專案；實驗、調參、查指標定義與下載結果，請進入三個 Streamlit app。</p>
+          <div class="actions">
+            <a class="btn primary" href="https://nccu-data-science-tsmc-project.streamlit.app/" target="_blank" rel="noreferrer">開啟已部署版本</a>
+            <a class="btn" href="#hero">回到開場</a>
+          </div>
+        </div>
+        <div class="command-list">
+          <code>streamlit run technical_strategy/technical_app.py</code>
+          <code>streamlit run multi_factor_strategy/multi_factor_app.py</code>
+          <code>streamlit run triple_barrier_strategy/triple_barrier_app.py</code>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="pager" aria-label="Page progress">
+    <a href="#hero" aria-label="Hero"></a>
+    <a href="#why" aria-label="Why"></a>
+    <a href="#journey" aria-label="Journey"></a>
+    <a href="#strategies" aria-label="Strategies"></a>
+    <a href="#architecture" aria-label="Architecture"></a>
+    <a href="#demo" aria-label="Demo"></a>
+    <a href="#closing" aria-label="Run"></a>
+  </nav>
+
+  <script>
+    const sections = [...document.querySelectorAll("main section")];
+    const navLinks = [...document.querySelectorAll(".nav a")];
+    const pagerLinks = [...document.querySelectorAll(".pager a")];
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        const id = visible.target.id;
+        [...navLinks, ...pagerLinks].forEach((link) => {
+          link.classList.toggle("active", link.getAttribute("href") === `#${id}`);
+        });
+      },
+      { rootMargin: "-30% 0px -55% 0px", threshold: [0.1, 0.35, 0.6] }
+    );
+    sections.forEach((section) => observer.observe(section));
+
+    document.getElementById("presentationToggle").addEventListener("click", () => {
+      document.body.classList.toggle("presentation");
+    });
+
+    const chart = document.getElementById("heroChart");
+    const ctx = chart.getContext("2d");
+    const series = {
+      strategy: [1, 1.03, 1.05, 1.04, 1.08, 1.15, 1.13, 1.21, 1.19, 1.27, 1.24, 1.31],
+      benchmark: [1, 1.02, 1.01, 1.07, 1.06, 1.11, 1.03, 1.08, 1.06, 1.12, 1.09, 1.16],
+    };
+
+    function drawChart() {
+      const width = chart.width;
+      const height = chart.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#fbfdff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "#e5ecf5";
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 5; i += 1) {
+        const y = (height / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(32, y);
+        ctx.lineTo(width - 20, y);
+        ctx.stroke();
+      }
+      drawLine(series.benchmark, "#94a3b8", 3);
+      drawLine(series.strategy, "#1f7ae0", 4);
+      drawLegend();
+    }
+
+    function drawLine(values, color, lineWidth) {
+      const width = chart.width;
+      const height = chart.height;
+      const min = 0.95;
+      const max = 1.34;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      values.forEach((value, index) => {
+        const x = 36 + (index / (values.length - 1)) * (width - 64);
+        const y = height - 34 - ((value - min) / (max - min)) * (height - 62);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function drawLegend() {
+      ctx.font = "22px Inter, sans-serif";
+      ctx.fillStyle = "#1f7ae0";
+      ctx.fillText("Strategy", 38, 32);
+      ctx.fillStyle = "#64748b";
+      ctx.fillText("Buy & Hold", 155, 32);
+    }
+
+    drawChart();
+
+    const journeyContent = {
+      data: {
+        tag: "Data pipeline",
+        title: "價格、EPS、三大法人與融券資料進入同一條時間線。",
+        text: "價格資料提供 OHLCV，FinMind 或 CSV 補上 EPS 與籌碼流向；基本面會依財報可取得日期對齊，降低未來資訊滲漏。",
+        metrics: [["OHLCV", "價格與成交量"], ["EPS", "基本面獲利"], ["Chip", "法人與信用交易"]],
+      },
+      features: {
+        tag: "Feature engineering",
+        title: "把原始資料轉成模型可讀的因子狀態。",
+        text: "技術面包含 RSI、MACD、均線、ATR；基本面追蹤 EPS 成長；籌碼面則計算法人買賣超、連續買進與信用交易變化。",
+        metrics: [["RSI / MACD", "動能與趨勢"], ["ATR", "波動率門檻"], ["Flow", "籌碼方向"]],
+      },
+      models: {
+        tag: "Supervised learning",
+        title: "每個因子先單獨學，再合成可交易分數。",
+        text: "子模型預測有利事件機率，raw probability 會依 validation 分布轉成 0-100 分數；Meta model 再學習三個因子之間的交互關係。",
+        metrics: [["AUC", "機率排序能力"], ["AP", "稀有正樣本"], ["Score", "0-100 校正"]],
+      },
+      backtest: {
+        tag: "Backtesting",
+        title: "把模型分數變成部位，再用績效指標檢查代價。",
+        text: "系統會搜尋進出場門檻，納入交易成本、holding ratio、entry count、Sharpe 與最大回撤，避免只看總報酬。",
+        metrics: [["Sharpe", "風險調整"], ["MDD", "最大回撤"], ["Cost", "交易成本"]],
+      },
+    };
+
+    document.querySelectorAll(".step-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".step-button").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        const item = journeyContent[button.dataset.step];
+        document.getElementById("journeyPanel").innerHTML = `
+          <span class="tag">${item.tag}</span>
+          <h3>${item.title}</h3>
+          <p>${item.text}</p>
+          <div class="panel-metrics">
+            ${item.metrics.map(([head, sub]) => `<div><b>${head}</b><span>${sub}</span></div>`).join("")}
+          </div>
+        `;
+      });
+    });
+
+    const strategyContent = {
+      technical: {
+        title: "Technical Strategy：先確認技術指標能不能形成穩定訊號。",
+        text: "輸入 RSI、MACD、均線乖離、成交量變化等特徵，透過時間序 train / validation / test 切分評估模型與回測結果。",
+      },
+      multi: {
+        title: "Multi-Factor Strategy：讓技術、基本面、籌碼各自說話。",
+        text: "三個因子分別產生分數，再以人工權重或 Meta model 合成 final_score，適合解釋某一天為什麼進場或不進場。",
+      },
+      triple: {
+        title: "Triple Barrier Strategy：把訓練標籤對齊交易事件。",
+        text: "不只預測明天漲跌，而是問價格是否先碰到停利、停損或時間障礙；並用 ATR 動態門檻與事件權重強化關鍵行情。",
+      },
+    };
+
+    document.querySelectorAll(".strategy-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        document.querySelectorAll(".strategy-card").forEach((item) => item.classList.remove("active"));
+        card.classList.add("active");
+        const item = strategyContent[card.dataset.strategy];
+        document.getElementById("strategyDetail").innerHTML = `<h3>${item.title}</h3><p>${item.text}</p>`;
+      });
+    });
+
+    const scenarioContent = {
+      breakout: {
+        title: "波動收斂後突破",
+        text: "ATR 動態屏障在冷清期會收窄，當分數跨過門檻時，模型更容易把小幅但有品質的突破納入候選訊號。",
+        base: 72,
+        risk: "中等",
+      },
+      pullback: {
+        title: "籌碼轉弱回檔",
+        text: "若籌碼面轉弱且分數低於門檻，策略會傾向等待；Triple Barrier 的停損事件也會讓模型更重視類似風險型態。",
+        base: 43,
+        risk: "偏高",
+      },
+      neutral: {
+        title: "盤整觀望",
+        text: "盤整天數很多時，Accuracy 容易被誤導；AUC 與 Average Precision 更能檢查機率是否真的把好行情排前面。",
+        base: 55,
+        risk: "中性",
+      },
+    };
+
+    let activeScenario = "breakout";
+    const thresholdRange = document.getElementById("thresholdRange");
+    const atrRange = document.getElementById("atrRange");
+
+    function updateDemo() {
+      const threshold = Number(thresholdRange.value);
+      const atr = Number(atrRange.value);
+      const scenario = scenarioContent[activeScenario];
+      const adjustedScore = Math.max(35, Math.min(92, Math.round(scenario.base + (2 - atr) * 4)));
+      document.getElementById("thresholdValue").textContent = threshold;
+      document.getElementById("atrValue").textContent = atr.toFixed(1);
+      document.getElementById("scenarioTitle").textContent = scenario.title;
+      document.getElementById("scenarioText").textContent = scenario.text;
+      document.getElementById("demoScore").textContent = adjustedScore;
+      document.getElementById("demoDecision").textContent = adjustedScore >= threshold ? "BUY" : "WAIT";
+      document.getElementById("demoBarrier").textContent = `${atr.toFixed(1)}x`;
+      document.getElementById("demoRisk").textContent = scenario.risk;
+    }
+
+    document.querySelectorAll(".chip").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".chip").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        activeScenario = button.dataset.scenario;
+        updateDemo();
+      });
+    });
+
+    thresholdRange.addEventListener("input", updateDemo);
+    atrRange.addEventListener("input", updateDemo);
+    updateDemo();
+  </script>
+</body>
+</html>
