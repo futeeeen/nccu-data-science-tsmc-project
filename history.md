@@ -1,5 +1,10 @@
 # History
 
+## 2026-05-23
+- Added a GitHub Actions workflow to deploy `project_site/` automatically to GitHub Pages when changes are pushed to `main`.
+- Added `project_site/.nojekyll` so the static HTML site is served directly without Jekyll processing.
+- Updated `project_site/README.md` with GitHub Pages deployment instructions and the required Pages source setting.
+
 ## 2026-05-21
 - Updated the Triple Barrier strategy to support ATR-based dynamic barriers, with default take-profit at `2 * ATR(14)` and stop-loss at `1 * ATR(14)`.
 - Added `atr_14`, `atr_14_pct`, `tb_take_profit_pct`, and `tb_stop_loss_pct` so training data previews show the volatility-adjusted barrier design.
