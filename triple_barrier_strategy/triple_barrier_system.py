@@ -16,7 +16,14 @@ from sklearn.preprocessing import StandardScaler
 
 TECHNICAL_COLS = [
     "return_1d",
+    "return_20d",
+    "return_60d",
     "ma_ratio",
+    "ma_60_slope",
+    "ma_120_slope",
+    "price_above_ma120",
+    "trend_strength_20_60",
+    "volatility_contraction_20_60",
     "bias_5",
     "bias_20",
     "vol_chg",
@@ -156,9 +163,17 @@ def download_price_data(ticker: str, start: str, end: str, finmind_token: str | 
 def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["return_1d"] = out["Close"].pct_change()
+    out["return_20d"] = out["Close"].pct_change(20)
+    out["return_60d"] = out["Close"].pct_change(60)
     out["ma_5"] = out["Close"].rolling(5).mean()
     out["ma_20"] = out["Close"].rolling(20).mean()
+    out["ma_60"] = out["Close"].rolling(60).mean()
+    out["ma_120"] = out["Close"].rolling(120).mean()
     out["ma_ratio"] = out["ma_5"] / out["ma_20"]
+    out["ma_60_slope"] = out["ma_60"].pct_change(20)
+    out["ma_120_slope"] = out["ma_120"].pct_change(20)
+    out["price_above_ma120"] = (out["Close"] > out["ma_120"]).astype(float)
+    out["trend_strength_20_60"] = (out["ma_20"] / out["ma_60"]) - 1
     out["bias_5"] = (out["Close"] / out["ma_5"]) - 1
     out["bias_20"] = (out["Close"] / out["ma_20"]) - 1
     out["vol_chg"] = out["Volume"].pct_change()
@@ -174,6 +189,9 @@ def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     ).max(axis=1)
     out["atr_14"] = true_range.rolling(14).mean()
     out["atr_14_pct"] = out["atr_14"] / out["Close"]
+    out["volatility_contraction_20_60"] = (
+        out["atr_14_pct"].rolling(20).mean() / out["atr_14_pct"].rolling(60).mean()
+    )
 
     delta = out["Close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
@@ -523,6 +541,37 @@ def time_series_split_three(
     return df.iloc[:train_end].copy(), df.iloc[train_end:val_end].copy(), df.iloc[val_end:].copy()
 
 
+def apply_purged_embargo_split(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    embargo_days: int = 5,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    train = train_df.copy()
+    val = val_df.copy()
+    test = test_df.copy()
+    before = {"train": len(train), "validation": len(val), "test": len(test)}
+
+    if "tb_event_date" in train.columns and not val.empty:
+        val_start = val.index.min()
+        train = train[train["tb_event_date"].isna() | (pd.to_datetime(train["tb_event_date"]) < val_start)]
+    if "tb_event_date" in val.columns and not test.empty:
+        test_start = test.index.min()
+        val = val[val["tb_event_date"].isna() | (pd.to_datetime(val["tb_event_date"]) < test_start)]
+
+    if embargo_days > 0:
+        if not val.empty:
+            val_start = val.index.min()
+            train = train[train.index < val_start - pd.Timedelta(days=int(embargo_days))]
+        if not test.empty:
+            test_start = test.index.min()
+            val = val[val.index < test_start - pd.Timedelta(days=int(embargo_days))]
+
+    after = {"train": len(train), "validation": len(val), "test": len(test)}
+    removed = {key: before[key] - after[key] for key in before}
+    return train, val, test, removed
+
+
 def get_factor_model() -> object:
     return Pipeline(
         steps=[
@@ -738,6 +787,44 @@ def combine_scores(
     return out
 
 
+def add_trade_decision_scores(bt: pd.DataFrame) -> pd.DataFrame:
+    out = bt.copy()
+    trend_parts = []
+    if "Close" in out.columns and "ma_60" in out.columns:
+        trend_parts.append((out["Close"] > out["ma_60"]).astype(float))
+    if "Close" in out.columns and "ma_120" in out.columns:
+        trend_parts.append((out["Close"] > out["ma_120"]).astype(float))
+    if "ma_60_slope" in out.columns:
+        trend_parts.append((out["ma_60_slope"] > 0).astype(float))
+    if "ma_120_slope" in out.columns:
+        trend_parts.append((out["ma_120_slope"] > 0).astype(float))
+    if "return_20d" in out.columns:
+        trend_parts.append((out["return_20d"] > 0).astype(float))
+    if "return_60d" in out.columns:
+        trend_parts.append((out["return_60d"] > 0).astype(float))
+    if trend_parts:
+        out["trend_score"] = pd.concat(trend_parts, axis=1).mean(axis=1).fillna(0.0) * 100.0
+    else:
+        out["trend_score"] = 50.0
+
+    entry_parts = []
+    if "bias_20" in out.columns:
+        pullback_quality = (1.0 - (out["bias_20"].abs() / 0.12)).clip(0.0, 1.0)
+        entry_parts.append(pullback_quality)
+    if "rsi_14" in out.columns:
+        rsi = out["rsi_14"].clip(0, 100)
+        rsi_quality = (1.0 - ((rsi - 50.0).abs() / 50.0)).clip(0.0, 1.0)
+        entry_parts.append(rsi_quality)
+    if "volatility_contraction_20_60" in out.columns:
+        contraction_quality = (1.2 - out["volatility_contraction_20_60"]).clip(0.0, 1.0)
+        entry_parts.append(contraction_quality)
+    if entry_parts:
+        out["entry_timing_score"] = pd.concat(entry_parts, axis=1).mean(axis=1).fillna(0.5) * 100.0
+    else:
+        out["entry_timing_score"] = 50.0
+    return out
+
+
 def build_target_position(
     scores: pd.Series,
     buy_threshold: float,
@@ -772,9 +859,25 @@ def run_score_backtest(
     atr_take_profit_mult: float = 2.0,
     atr_stop_loss_mult: float = 1.0,
     atr_col: str = "atr_14",
+    enable_entry_filters: bool = True,
+    max_entry_rsi: float = 75.0,
+    max_entry_bias_20: float = 0.12,
+    max_entry_atr_pct_rank: float = 85.0,
+    max_entry_vol_chg_rank: float = 90.0,
+    enable_trend_timing_filter: bool = True,
+    min_trend_score: float = 55.0,
+    min_entry_timing_score: float = 20.0,
+    enable_position_sizing: bool = True,
+    risk_per_trade_pct: float = 0.01,
+    max_position_size: float = 1.0,
+    min_stop_loss_pct: float = 0.01,
+    enable_drawdown_derisk: bool = True,
+    derisk_drawdown_pct: float = 0.10,
+    derisk_position_multiplier: float = 0.50,
 ) -> pd.DataFrame:
     bt = df.loc[score_df.index].copy()
     bt = bt.join(score_df, how="left")
+    bt = add_trade_decision_scores(bt)
     bt["buy_threshold"] = float(threshold)
     bt["sell_threshold"] = float(threshold if sell_threshold is None else sell_threshold)
     bt["strategy_mode"] = strategy_mode
@@ -783,6 +886,37 @@ def run_score_backtest(
     bt["position"] = 0.0
     bt["tb_trade_event"] = ""
     bt["tb_days_held_live"] = 0
+    bt["entry_filter_overextended"] = False
+    bt["entry_filter_crowded"] = False
+    bt["entry_filter_trend_timing"] = True
+    bt["entry_filter_ok"] = True
+
+    atr_rank_col = "atr_14_pct_pct_rank"
+    vol_rank_col = "vol_chg_pct_rank"
+    if atr_rank_col not in bt.columns and "atr_14_pct" in bt.columns:
+        bt[atr_rank_col] = bt["atr_14_pct"].rank(pct=True) * 100.0
+    if vol_rank_col not in bt.columns and "vol_chg" in bt.columns:
+        bt[vol_rank_col] = bt["vol_chg"].rank(pct=True) * 100.0
+
+    overextended = pd.Series(False, index=bt.index)
+    crowded = pd.Series(False, index=bt.index)
+    if "rsi_14" in bt.columns:
+        overextended |= bt["rsi_14"].fillna(0.0) > max_entry_rsi
+    if "bias_20" in bt.columns:
+        overextended |= bt["bias_20"].fillna(0.0) > max_entry_bias_20
+    if atr_rank_col in bt.columns:
+        crowded |= bt[atr_rank_col].fillna(0.0) > max_entry_atr_pct_rank
+    if vol_rank_col in bt.columns:
+        crowded |= bt[vol_rank_col].fillna(0.0) > max_entry_vol_chg_rank
+    bt["entry_filter_overextended"] = overextended
+    bt["entry_filter_crowded"] = crowded
+    trend_timing_ok = (
+        (bt["trend_score"].fillna(0.0) >= min_trend_score)
+        & (bt["entry_timing_score"].fillna(0.0) >= min_entry_timing_score)
+    )
+    bt["entry_filter_trend_timing"] = trend_timing_ok
+    discipline_ok = ~(overextended | crowded) if enable_entry_filters else pd.Series(True, index=bt.index)
+    bt["entry_filter_ok"] = discipline_ok & trend_timing_ok if enable_trend_timing_filter else discipline_ok
 
     position = 0.0
     entry_price = 0.0
@@ -804,7 +938,7 @@ def run_score_backtest(
 
     for i, score in enumerate(scores):
         event = ""
-        if position == 1.0:
+        if position > 0.0:
             days_held = i - entry_pos
             hit_stop = lows[i] <= entry_price * (1.0 - entry_stop_loss_pct)
             hit_profit = highs[i] >= entry_price * (1.0 + entry_take_profit_pct)
@@ -823,8 +957,8 @@ def run_score_backtest(
                 position = 0.0
                 event = "model_exit"
 
-        if position == 0.0 and score >= threshold and event == "":
-            position = 1.0
+        entry_signal = position == 0.0 and score >= threshold and event == ""
+        if entry_signal and bool(bt["entry_filter_ok"].iloc[i]):
             entry_price = closes[i]
             entry_pos = i
             if barrier_mode == "atr" and np.isfinite(atr_values[i]) and atr_values[i] > 0 and entry_price > 0:
@@ -833,17 +967,24 @@ def run_score_backtest(
             else:
                 entry_take_profit_pct = take_profit_pct
                 entry_stop_loss_pct = stop_loss_pct
+            if enable_position_sizing:
+                effective_stop = max(float(entry_stop_loss_pct), float(min_stop_loss_pct))
+                position = min(float(max_position_size), float(risk_per_trade_pct) / effective_stop)
+            else:
+                position = 1.0
             event = "entry"
+        elif entry_signal:
+            event = "entry_blocked_filter"
 
         targets.append(position)
         positions.append(position)
         events.append(event)
-        held_days.append(float(i - entry_pos) if position == 1.0 else 0.0)
-        entry_tp_history.append(float(entry_take_profit_pct) if position == 1.0 else np.nan)
-        entry_sl_history.append(float(entry_stop_loss_pct) if position == 1.0 else np.nan)
+        held_days.append(float(i - entry_pos) if position > 0.0 else 0.0)
+        entry_tp_history.append(float(entry_take_profit_pct) if position > 0.0 else np.nan)
+        entry_sl_history.append(float(entry_stop_loss_pct) if position > 0.0 else np.nan)
 
     bt["target_position"] = targets
-    bt["position"] = pd.Series(positions, index=bt.index).shift(1).fillna(0.0)
+    bt["raw_position"] = pd.Series(positions, index=bt.index).shift(1).fillna(0.0)
     bt["tb_trade_event"] = events
     bt["tb_days_held_live"] = held_days
     bt["take_profit_pct"] = take_profit_pct
@@ -851,6 +992,18 @@ def run_score_backtest(
     bt["barrier_mode"] = barrier_mode
     bt["atr_take_profit_mult"] = atr_take_profit_mult
     bt["atr_stop_loss_mult"] = atr_stop_loss_mult
+    bt["entry_filters_enabled"] = enable_entry_filters
+    bt["max_entry_rsi"] = max_entry_rsi
+    bt["max_entry_bias_20"] = max_entry_bias_20
+    bt["max_entry_atr_pct_rank"] = max_entry_atr_pct_rank
+    bt["max_entry_vol_chg_rank"] = max_entry_vol_chg_rank
+    bt["trend_timing_filter_enabled"] = enable_trend_timing_filter
+    bt["min_trend_score"] = min_trend_score
+    bt["min_entry_timing_score"] = min_entry_timing_score
+    bt["position_sizing_enabled"] = enable_position_sizing
+    bt["risk_per_trade_pct"] = risk_per_trade_pct
+    bt["max_position_size"] = max_position_size
+    bt["min_stop_loss_pct"] = min_stop_loss_pct
     bt["entry_take_profit_pct"] = entry_tp_history
     bt["entry_stop_loss_pct"] = entry_sl_history
     if "tb_take_profit_pct" in bt.columns:
@@ -858,6 +1011,24 @@ def run_score_backtest(
     if "tb_stop_loss_pct" in bt.columns:
         bt["current_stop_loss_pct"] = bt["tb_stop_loss_pct"]
     bt["max_holding_days"] = max_holding_days
+    bt["raw_position_chg"] = bt["raw_position"].diff().abs().fillna(bt["raw_position"])
+    bt["raw_cost"] = bt["raw_position_chg"] * (cost_bps / 10000.0)
+    bt["raw_strategy_ret"] = bt["raw_position"] * bt["asset_ret"] - bt["raw_cost"]
+    raw_cum = (1 + bt["raw_strategy_ret"]).cumprod()
+    raw_drawdown = raw_cum / raw_cum.cummax() - 1.0
+    raw_drawdown_prior = raw_drawdown.shift(1).fillna(0.0)
+    if enable_drawdown_derisk:
+        bt["drawdown_derisk_multiplier"] = np.where(
+            raw_drawdown_prior <= -abs(float(derisk_drawdown_pct)),
+            float(derisk_position_multiplier),
+            1.0,
+        )
+    else:
+        bt["drawdown_derisk_multiplier"] = 1.0
+    bt["drawdown_derisk_enabled"] = enable_drawdown_derisk
+    bt["derisk_drawdown_pct"] = derisk_drawdown_pct
+    bt["derisk_position_multiplier"] = derisk_position_multiplier
+    bt["position"] = bt["raw_position"] * bt["drawdown_derisk_multiplier"]
     bt["position_chg"] = bt["position"].diff().abs().fillna(bt["position"])
     bt["cost"] = bt["position_chg"] * (cost_bps / 10000.0)
     bt["strategy_ret"] = bt["position"] * bt["asset_ret"] - bt["cost"]
@@ -891,7 +1062,90 @@ def sharpe_ratio(daily_returns: pd.Series, annual_factor: int = 252) -> float:
     return float((daily_returns.mean() / std) * np.sqrt(annual_factor))
 
 
+def trade_returns(bt: pd.DataFrame) -> pd.Series:
+    invested = bt["position"].fillna(0.0) > 0
+    if not invested.any():
+        return pd.Series(dtype=float)
+
+    starts = invested & ~invested.shift(1, fill_value=False)
+    trade_id = starts.cumsum()
+    per_trade = bt.loc[invested].groupby(trade_id[invested])["strategy_ret"].apply(
+        lambda returns: float((1.0 + returns).prod() - 1.0)
+    )
+    return per_trade.replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def statistical_edge_metrics(bt: pd.DataFrame) -> dict[str, float]:
+    trades = trade_returns(bt)
+    trade_count = int(len(trades))
+    if trade_count == 0:
+        return {
+            "trade_count": 0,
+            "win_count": 0,
+            "loss_count": 0,
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "payoff_ratio": 0.0,
+            "profit_factor": 0.0,
+            "expectancy": 0.0,
+        }
+
+    wins = trades[trades > 0]
+    losses = trades[trades < 0]
+    win_count = int(len(wins))
+    loss_count = int(len(losses))
+    win_rate = win_count / trade_count
+    loss_rate = loss_count / trade_count
+    avg_win = float(wins.mean()) if win_count else 0.0
+    avg_loss = float(losses.mean()) if loss_count else 0.0
+    payoff_ratio = avg_win / abs(avg_loss) if avg_loss < 0 else np.inf if avg_win > 0 else 0.0
+    gross_profit = float(wins.sum()) if win_count else 0.0
+    gross_loss = abs(float(losses.sum())) if loss_count else 0.0
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf if gross_profit > 0 else 0.0
+    expectancy = win_rate * avg_win - loss_rate * abs(avg_loss)
+    return {
+        "trade_count": trade_count,
+        "win_count": win_count,
+        "loss_count": loss_count,
+        "win_rate": float(win_rate),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "payoff_ratio": float(payoff_ratio),
+        "profit_factor": float(profit_factor),
+        "expectancy": float(expectancy),
+    }
+
+
+def validation_objective(
+    diagnostics_row: dict[str, float],
+    sharpe_weight: float = 0.10,
+    drawdown_penalty: float = 0.50,
+    turnover_penalty: float = 0.001,
+    max_drawdown_limit: float = 0.25,
+    drawdown_violation_penalty: float = 1.0,
+) -> float:
+    objective = (
+        diagnostics_row["expectancy"]
+        + sharpe_weight * diagnostics_row["strategy_sharpe"]
+        - drawdown_penalty * abs(diagnostics_row["strategy_max_drawdown"])
+        - turnover_penalty * diagnostics_row["entry_count"]
+    )
+    if max_drawdown_limit > 0 and abs(diagnostics_row["strategy_max_drawdown"]) > max_drawdown_limit:
+        objective -= drawdown_violation_penalty
+    return float(objective)
+
+
+def contiguous_validation_folds(score_df: pd.DataFrame, fold_count: int) -> list[pd.DataFrame]:
+    if fold_count <= 1 or len(score_df) < fold_count * 5:
+        return [score_df]
+    index_chunks = np.array_split(score_df.index, int(fold_count))
+    return [score_df.loc[index] for index in index_chunks if len(index) > 0]
+
+
 def diagnostics(bt: pd.DataFrame) -> dict[str, float]:
+    edge = statistical_edge_metrics(bt)
+    entry_blocked_count = int((bt.get("tb_trade_event", pd.Series(dtype=str)) == "entry_blocked_filter").sum())
     return {
         "strategy_total_return": float(bt["strategy_cum"].iloc[-1] - 1),
         "buy_hold_total_return": float(bt["buy_hold_cum"].iloc[-1] - 1),
@@ -899,9 +1153,11 @@ def diagnostics(bt: pd.DataFrame) -> dict[str, float]:
         "buy_hold_max_drawdown": max_drawdown(bt["buy_hold_cum"]),
         "strategy_sharpe": sharpe_ratio(bt["strategy_ret"]),
         "buy_hold_sharpe": sharpe_ratio(bt["buy_hold_ret"]),
-        "entry_count": int(((bt["position"] == 1) & (bt["position"].shift(1).fillna(0) == 0)).sum()),
+        "entry_count": int(((bt["position"] > 0) & (bt["position"].shift(1).fillna(0) <= 0)).sum()),
+        "entry_blocked_count": entry_blocked_count,
         "holding_ratio": float(bt["position"].mean()),
         "total_cost": float(bt["cost"].sum()),
+        **edge,
     }
 
 
@@ -918,37 +1174,98 @@ def choose_final_threshold(
     barrier_mode: str = "atr",
     atr_take_profit_mult: float = 2.0,
     atr_stop_loss_mult: float = 1.0,
+    objective_sharpe_weight: float = 0.10,
+    objective_drawdown_penalty: float = 0.50,
+    objective_turnover_penalty: float = 0.001,
+    max_validation_drawdown: float = 0.25,
+    enable_entry_filters: bool = True,
+    max_entry_rsi: float = 75.0,
+    max_entry_bias_20: float = 0.12,
+    max_entry_atr_pct_rank: float = 85.0,
+    max_entry_vol_chg_rank: float = 90.0,
+    enable_trend_timing_filter: bool = True,
+    min_trend_score: float = 55.0,
+    min_entry_timing_score: float = 20.0,
+    enable_position_sizing: bool = True,
+    risk_per_trade_pct: float = 0.01,
+    max_position_size: float = 1.0,
+    min_stop_loss_pct: float = 0.01,
+    enable_drawdown_derisk: bool = True,
+    derisk_drawdown_pct: float = 0.10,
+    derisk_position_multiplier: float = 0.50,
+    walk_forward_folds: int = 1,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_threshold = threshold_min
     best_sell_threshold = threshold_min
-    best_return = -np.inf
+    best_objective = -np.inf
     thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
+    validation_folds = contiguous_validation_folds(val_score_df, walk_forward_folds)
     for threshold in thresholds:
-        bt = run_score_backtest(
-            df,
-            val_score_df,
-            float(threshold),
-            cost_bps,
-            take_profit_pct=take_profit_pct,
-            stop_loss_pct=stop_loss_pct,
-            max_holding_days=max_holding_days,
-            barrier_mode=barrier_mode,
-            atr_take_profit_mult=atr_take_profit_mult,
-            atr_stop_loss_mult=atr_stop_loss_mult,
-        )
-        d = diagnostics(bt)
+        fold_metrics = []
+        fold_objectives = []
+        for fold_score_df in validation_folds:
+            bt = run_score_backtest(
+                df,
+                fold_score_df,
+                float(threshold),
+                cost_bps,
+                take_profit_pct=take_profit_pct,
+                stop_loss_pct=stop_loss_pct,
+                max_holding_days=max_holding_days,
+                barrier_mode=barrier_mode,
+                atr_take_profit_mult=atr_take_profit_mult,
+                atr_stop_loss_mult=atr_stop_loss_mult,
+                enable_entry_filters=enable_entry_filters,
+                max_entry_rsi=max_entry_rsi,
+                max_entry_bias_20=max_entry_bias_20,
+                max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+                max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+            )
+            fold_d = diagnostics(bt)
+            fold_metrics.append(fold_d)
+            fold_objectives.append(
+                validation_objective(
+                    fold_d,
+                    sharpe_weight=objective_sharpe_weight,
+                    drawdown_penalty=objective_drawdown_penalty,
+                    turnover_penalty=objective_turnover_penalty,
+                    max_drawdown_limit=max_validation_drawdown,
+                )
+            )
+        d = {
+            key: float(np.nanmean([metrics[key] for metrics in fold_metrics]))
+            for key in fold_metrics[0]
+            if isinstance(fold_metrics[0][key], (int, float, np.integer, np.floating))
+        }
+        objective = float(np.nanmean(fold_objectives))
         rows.append(
             {
                 "threshold": float(threshold),
+                "validation_objective": objective,
+                "validation_fold_count": len(validation_folds),
+                "validation_expectancy": d["expectancy"],
+                "validation_profit_factor": d["profit_factor"],
+                "validation_win_rate": d["win_rate"],
                 "validation_strategy_return": d["strategy_total_return"],
                 "validation_sharpe": d["strategy_sharpe"],
                 "validation_max_drawdown": d["strategy_max_drawdown"],
                 "validation_entry_count": d["entry_count"],
+                "validation_entry_blocked_count": d["entry_blocked_count"],
             }
         )
-        if d["strategy_total_return"] > best_return:
-            best_return = d["strategy_total_return"]
+        if objective > best_objective:
+            best_objective = objective
             best_threshold = float(threshold)
             best_sell_threshold = float(threshold)
     return best_threshold, best_sell_threshold, pd.DataFrame(rows)
@@ -967,44 +1284,105 @@ def choose_hysteresis_thresholds(
     barrier_mode: str = "atr",
     atr_take_profit_mult: float = 2.0,
     atr_stop_loss_mult: float = 1.0,
+    objective_sharpe_weight: float = 0.10,
+    objective_drawdown_penalty: float = 0.50,
+    objective_turnover_penalty: float = 0.001,
+    max_validation_drawdown: float = 0.25,
+    enable_entry_filters: bool = True,
+    max_entry_rsi: float = 75.0,
+    max_entry_bias_20: float = 0.12,
+    max_entry_atr_pct_rank: float = 85.0,
+    max_entry_vol_chg_rank: float = 90.0,
+    enable_trend_timing_filter: bool = True,
+    min_trend_score: float = 55.0,
+    min_entry_timing_score: float = 20.0,
+    enable_position_sizing: bool = True,
+    risk_per_trade_pct: float = 0.01,
+    max_position_size: float = 1.0,
+    min_stop_loss_pct: float = 0.01,
+    enable_drawdown_derisk: bool = True,
+    derisk_drawdown_pct: float = 0.10,
+    derisk_position_multiplier: float = 0.50,
+    walk_forward_folds: int = 1,
 ) -> tuple[float, float, pd.DataFrame]:
     rows = []
     best_buy_threshold = threshold_min
     best_sell_threshold = threshold_min
-    best_return = -np.inf
+    best_objective = -np.inf
     thresholds = np.arange(threshold_min, threshold_max + 1e-12, threshold_step)
+    validation_folds = contiguous_validation_folds(val_score_df, walk_forward_folds)
     for buy_threshold in thresholds:
         for sell_threshold in thresholds:
             if sell_threshold > buy_threshold:
                 continue
-            bt = run_score_backtest(
-                df,
-                val_score_df,
-                float(buy_threshold),
-                cost_bps,
-                sell_threshold=float(sell_threshold),
-                strategy_mode="hysteresis",
-                take_profit_pct=take_profit_pct,
-                stop_loss_pct=stop_loss_pct,
-                max_holding_days=max_holding_days,
-                barrier_mode=barrier_mode,
-                atr_take_profit_mult=atr_take_profit_mult,
-                atr_stop_loss_mult=atr_stop_loss_mult,
+            fold_metrics = []
+            fold_objectives = []
+            for fold_score_df in validation_folds:
+                bt = run_score_backtest(
+                    df,
+                    fold_score_df,
+                    float(buy_threshold),
+                    cost_bps,
+                    sell_threshold=float(sell_threshold),
+                    strategy_mode="hysteresis",
+                    take_profit_pct=take_profit_pct,
+                    stop_loss_pct=stop_loss_pct,
+                    max_holding_days=max_holding_days,
+                    barrier_mode=barrier_mode,
+                    atr_take_profit_mult=atr_take_profit_mult,
+                    atr_stop_loss_mult=atr_stop_loss_mult,
+                    enable_entry_filters=enable_entry_filters,
+                    max_entry_rsi=max_entry_rsi,
+                    max_entry_bias_20=max_entry_bias_20,
+                    max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+                    max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                    enable_trend_timing_filter=enable_trend_timing_filter,
+                    min_trend_score=min_trend_score,
+                    min_entry_timing_score=min_entry_timing_score,
+                    enable_position_sizing=enable_position_sizing,
+                    risk_per_trade_pct=risk_per_trade_pct,
+                    max_position_size=max_position_size,
+                    min_stop_loss_pct=min_stop_loss_pct,
+                    enable_drawdown_derisk=enable_drawdown_derisk,
+                    derisk_drawdown_pct=derisk_drawdown_pct,
+                    derisk_position_multiplier=derisk_position_multiplier,
             )
-            d = diagnostics(bt)
+                fold_d = diagnostics(bt)
+                fold_metrics.append(fold_d)
+                fold_objectives.append(
+                    validation_objective(
+                        fold_d,
+                        sharpe_weight=objective_sharpe_weight,
+                        drawdown_penalty=objective_drawdown_penalty,
+                        turnover_penalty=objective_turnover_penalty,
+                        max_drawdown_limit=max_validation_drawdown,
+                    )
+                )
+            d = {
+                key: float(np.nanmean([metrics[key] for metrics in fold_metrics]))
+                for key in fold_metrics[0]
+                if isinstance(fold_metrics[0][key], (int, float, np.integer, np.floating))
+            }
+            objective = float(np.nanmean(fold_objectives))
             rows.append(
                 {
                     "buy_threshold": float(buy_threshold),
                     "sell_threshold": float(sell_threshold),
+                    "validation_objective": objective,
+                    "validation_fold_count": len(validation_folds),
+                    "validation_expectancy": d["expectancy"],
+                    "validation_profit_factor": d["profit_factor"],
+                    "validation_win_rate": d["win_rate"],
                     "validation_strategy_return": d["strategy_total_return"],
                     "validation_sharpe": d["strategy_sharpe"],
                     "validation_max_drawdown": d["strategy_max_drawdown"],
                     "validation_entry_count": d["entry_count"],
+                    "validation_entry_blocked_count": d["entry_blocked_count"],
                     "validation_holding_ratio": d["holding_ratio"],
                 }
             )
-            if d["strategy_total_return"] > best_return:
-                best_return = d["strategy_total_return"]
+            if objective > best_objective:
+                best_objective = objective
                 best_buy_threshold = float(buy_threshold)
                 best_sell_threshold = float(sell_threshold)
     return best_buy_threshold, best_sell_threshold, pd.DataFrame(rows)
@@ -1032,6 +1410,25 @@ def run_meta_model_strategy(
     barrier_mode: str = "atr",
     atr_take_profit_mult: float = 2.0,
     atr_stop_loss_mult: float = 1.0,
+    objective_sharpe_weight: float = 0.10,
+    objective_drawdown_penalty: float = 0.50,
+    objective_turnover_penalty: float = 0.001,
+    max_validation_drawdown: float = 0.25,
+    enable_entry_filters: bool = True,
+    max_entry_rsi: float = 75.0,
+    max_entry_bias_20: float = 0.12,
+    max_entry_atr_pct_rank: float = 85.0,
+    max_entry_vol_chg_rank: float = 90.0,
+    enable_trend_timing_filter: bool = True,
+    min_trend_score: float = 55.0,
+    min_entry_timing_score: float = 20.0,
+    enable_position_sizing: bool = True,
+    risk_per_trade_pct: float = 0.01,
+    max_position_size: float = 1.0,
+    min_stop_loss_pct: float = 0.01,
+    enable_drawdown_derisk: bool = True,
+    derisk_drawdown_pct: float = 0.10,
+    derisk_position_multiplier: float = 0.50,
 ) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, float, float, pd.DataFrame]:
     meta_train_idx, meta_val_idx = split_validation_for_meta(val_df)
     meta_train = score_df.loc[meta_train_idx, META_SCORE_COLS].join(df["target"]).dropna()
@@ -1053,7 +1450,22 @@ def run_meta_model_strategy(
             barrier_mode=barrier_mode,
             atr_take_profit_mult=atr_take_profit_mult,
             atr_stop_loss_mult=atr_stop_loss_mult,
-        )
+            enable_entry_filters=enable_entry_filters,
+            max_entry_rsi=max_entry_rsi,
+            max_entry_bias_20=max_entry_bias_20,
+            max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+            max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+            )
         summary = pd.DataFrame(
             [{"item": "meta_model_status", "value": "neutral_insufficient_validation_data"}]
         )
@@ -1089,7 +1501,26 @@ def run_meta_model_strategy(
             barrier_mode=barrier_mode,
             atr_take_profit_mult=atr_take_profit_mult,
             atr_stop_loss_mult=atr_stop_loss_mult,
-        )
+            objective_sharpe_weight=objective_sharpe_weight,
+            objective_drawdown_penalty=objective_drawdown_penalty,
+            objective_turnover_penalty=objective_turnover_penalty,
+            max_validation_drawdown=max_validation_drawdown,
+            enable_entry_filters=enable_entry_filters,
+            max_entry_rsi=max_entry_rsi,
+            max_entry_bias_20=max_entry_bias_20,
+            max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+            max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+            )
     else:
         selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
             df=df,
@@ -1104,7 +1535,26 @@ def run_meta_model_strategy(
             barrier_mode=barrier_mode,
             atr_take_profit_mult=atr_take_profit_mult,
             atr_stop_loss_mult=atr_stop_loss_mult,
-        )
+            objective_sharpe_weight=objective_sharpe_weight,
+            objective_drawdown_penalty=objective_drawdown_penalty,
+            objective_turnover_penalty=objective_turnover_penalty,
+            max_validation_drawdown=max_validation_drawdown,
+            enable_entry_filters=enable_entry_filters,
+            max_entry_rsi=max_entry_rsi,
+            max_entry_bias_20=max_entry_bias_20,
+            max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+            max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+            )
 
     test_features = score_df.loc[test_df.index, META_SCORE_COLS].copy()
     test_features["meta_probability"] = pd.Series(
@@ -1127,6 +1577,11 @@ def run_meta_model_strategy(
         barrier_mode=barrier_mode,
         atr_take_profit_mult=atr_take_profit_mult,
         atr_stop_loss_mult=atr_stop_loss_mult,
+        enable_entry_filters=enable_entry_filters,
+        max_entry_rsi=max_entry_rsi,
+        max_entry_bias_20=max_entry_bias_20,
+        max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+        max_entry_vol_chg_rank=max_entry_vol_chg_rank,
     )
 
     clf = model.named_steps["clf"]
@@ -1175,7 +1630,14 @@ def build_strategy_comparison(
                 "strategy_max_drawdown": d["strategy_max_drawdown"],
                 "strategy_sharpe": d["strategy_sharpe"],
                 "entry_count": d["entry_count"],
+                "entry_blocked_count": d["entry_blocked_count"],
                 "holding_ratio": d["holding_ratio"],
+                "win_rate": d["win_rate"],
+                "avg_win": d["avg_win"],
+                "avg_loss": d["avg_loss"],
+                "payoff_ratio": d["payoff_ratio"],
+                "profit_factor": d["profit_factor"],
+                "expectancy": d["expectancy"],
             }
         )
     return pd.DataFrame(rows)
@@ -1209,6 +1671,28 @@ def run_multi_factor_pipeline(
     atr_take_profit_mult: float = 2.0,
     atr_stop_loss_mult: float = 1.0,
     max_holding_days: int = 20,
+    objective_sharpe_weight: float = 0.10,
+    objective_drawdown_penalty: float = 0.50,
+    objective_turnover_penalty: float = 0.001,
+    max_validation_drawdown: float = 0.25,
+    enable_entry_filters: bool = True,
+    max_entry_rsi: float = 75.0,
+    max_entry_bias_20: float = 0.12,
+    max_entry_atr_pct_rank: float = 85.0,
+    max_entry_vol_chg_rank: float = 90.0,
+    enable_trend_timing_filter: bool = True,
+    min_trend_score: float = 55.0,
+    min_entry_timing_score: float = 20.0,
+    enable_position_sizing: bool = True,
+    risk_per_trade_pct: float = 0.01,
+    max_position_size: float = 1.0,
+    min_stop_loss_pct: float = 0.01,
+    enable_drawdown_derisk: bool = True,
+    derisk_drawdown_pct: float = 0.10,
+    derisk_position_multiplier: float = 0.50,
+    enable_purged_embargo: bool = True,
+    embargo_days: int = 5,
+    walk_forward_folds: int = 3,
 ) -> FactorRunResult:
     notes: list[str] = []
     raw = download_price_data(ticker, start, end, finmind_token)
@@ -1282,6 +1766,20 @@ def run_multi_factor_pipeline(
     )
 
     train_df, val_df, test_df = time_series_split_three(df, val_size=val_size, test_size=test_size)
+    if enable_purged_embargo:
+        train_df, val_df, test_df, removed = apply_purged_embargo_split(
+            train_df,
+            val_df,
+            test_df,
+            embargo_days=embargo_days,
+        )
+        notes.append(
+            "Purged/embargo split applied: "
+            f"embargo_days={embargo_days}, "
+            f"removed_train={removed['train']}, "
+            f"removed_validation={removed['validation']}, "
+            f"removed_test={removed['test']}."
+        )
     score_parts = []
     factor_rows = []
     summary_rows = []
@@ -1315,6 +1813,26 @@ def run_multi_factor_pipeline(
                 barrier_mode=barrier_mode,
                 atr_take_profit_mult=atr_take_profit_mult,
                 atr_stop_loss_mult=atr_stop_loss_mult,
+                objective_sharpe_weight=objective_sharpe_weight,
+                objective_drawdown_penalty=objective_drawdown_penalty,
+                objective_turnover_penalty=objective_turnover_penalty,
+                max_validation_drawdown=max_validation_drawdown,
+                enable_entry_filters=enable_entry_filters,
+                max_entry_rsi=max_entry_rsi,
+                max_entry_bias_20=max_entry_bias_20,
+                max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+                max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+                walk_forward_folds=walk_forward_folds,
             )
         else:
             selected_threshold, selected_sell_threshold, threshold_table = choose_final_threshold(
@@ -1330,6 +1848,26 @@ def run_multi_factor_pipeline(
                 barrier_mode=barrier_mode,
                 atr_take_profit_mult=atr_take_profit_mult,
                 atr_stop_loss_mult=atr_stop_loss_mult,
+                objective_sharpe_weight=objective_sharpe_weight,
+                objective_drawdown_penalty=objective_drawdown_penalty,
+                objective_turnover_penalty=objective_turnover_penalty,
+                max_validation_drawdown=max_validation_drawdown,
+                enable_entry_filters=enable_entry_filters,
+                max_entry_rsi=max_entry_rsi,
+                max_entry_bias_20=max_entry_bias_20,
+                max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+                max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size=max_position_size,
+                min_stop_loss_pct=min_stop_loss_pct,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct,
+                derisk_position_multiplier=derisk_position_multiplier,
+                walk_forward_folds=walk_forward_folds,
             )
     backtest_df = run_score_backtest(
         df,
@@ -1344,6 +1882,11 @@ def run_multi_factor_pipeline(
         barrier_mode=barrier_mode,
         atr_take_profit_mult=atr_take_profit_mult,
         atr_stop_loss_mult=atr_stop_loss_mult,
+        enable_entry_filters=enable_entry_filters,
+        max_entry_rsi=max_entry_rsi,
+        max_entry_bias_20=max_entry_bias_20,
+        max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+        max_entry_vol_chg_rank=max_entry_vol_chg_rank,
     )
     backtest_df = add_feature_percentiles(backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     meta_backtest_df, meta_d, meta_summary, meta_threshold, meta_sell_threshold, meta_threshold_table = run_meta_model_strategy(
@@ -1363,6 +1906,15 @@ def run_multi_factor_pipeline(
         barrier_mode=barrier_mode,
         atr_take_profit_mult=atr_take_profit_mult,
         atr_stop_loss_mult=atr_stop_loss_mult,
+        objective_sharpe_weight=objective_sharpe_weight,
+        objective_drawdown_penalty=objective_drawdown_penalty,
+        objective_turnover_penalty=objective_turnover_penalty,
+        max_validation_drawdown=max_validation_drawdown,
+        enable_entry_filters=enable_entry_filters,
+        max_entry_rsi=max_entry_rsi,
+        max_entry_bias_20=max_entry_bias_20,
+        max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+        max_entry_vol_chg_rank=max_entry_vol_chg_rank,
     )
     meta_backtest_df = add_feature_percentiles(meta_backtest_df, val_df, TECHNICAL_COLS + FUNDAMENTAL_COLS + CHIP_COLS)
     weighted_d = diagnostics(backtest_df)

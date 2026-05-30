@@ -41,6 +41,33 @@ TEXT = {
         "threshold_max": "Threshold search max",
         "threshold_step": "Threshold search step",
         "cost_bps": "Trading cost (bps per position change)",
+        "objective_settings": "Validation Objective",
+        "objective_sharpe_weight": "Sharpe reward weight",
+        "objective_drawdown_penalty": "Drawdown penalty weight",
+        "objective_turnover_penalty": "Entry count penalty",
+        "max_validation_drawdown": "Max validation drawdown limit",
+        "entry_filter_settings": "Entry Discipline Filters",
+        "enable_entry_filters": "Enable anti-chasing entry filters",
+        "max_entry_rsi": "Max entry RSI",
+        "max_entry_bias_20": "Max entry 20-day bias",
+        "max_entry_atr_pct_rank": "Max entry ATR percentile",
+        "max_entry_vol_chg_rank": "Max entry volume-change percentile",
+        "trend_timing_settings": "Trend & Entry Timing",
+        "enable_trend_timing_filter": "Require trend and entry timing filters",
+        "min_trend_score": "Minimum trend score",
+        "min_entry_timing_score": "Minimum entry timing score",
+        "risk_settings": "Position Sizing & Drawdown Control",
+        "enable_position_sizing": "Enable risk-based position sizing",
+        "risk_per_trade_pct": "Risk per trade (%)",
+        "max_position_size": "Max position size (%)",
+        "min_stop_loss_pct": "Minimum stop-loss distance (%)",
+        "enable_drawdown_derisk": "Reduce position after drawdown",
+        "derisk_drawdown_pct": "Derisk trigger drawdown (%)",
+        "derisk_position_multiplier": "Derisk position multiplier",
+        "validation_split_settings": "Validation Leakage Control",
+        "enable_purged_embargo": "Use purged / embargo split",
+        "embargo_days": "Embargo days",
+        "walk_forward_folds": "Validation walk-forward folds",
         "barrier_settings": "Triple Barrier Labeling",
         "barrier_mode": "Barrier mode",
         "atr_barrier_mode": "Dynamic ATR barriers",
@@ -75,6 +102,12 @@ TEXT = {
         "entry_count": "Entry count",
         "holding_ratio": "Holding ratio",
         "total_cost": "Total trading cost",
+        "expectancy": "Expectancy per trade",
+        "profit_factor": "Profit factor",
+        "win_rate": "Win rate",
+        "avg_win": "Average win",
+        "avg_loss": "Average loss",
+        "entry_blocked_count": "Blocked entries",
         "selected_threshold": "Selected final score threshold",
         "selected_sell_threshold": "Selected sell score threshold",
         "current_strategy": "Current Trading Strategy",
@@ -865,7 +898,14 @@ def render_strategy_comparison(result, lang: str) -> None:
                 "strategy_max_drawdown": "{:.4f}",
                 "strategy_sharpe": "{:.4f}",
                 "entry_count": "{:.0f}",
+                "entry_blocked_count": "{:.0f}",
                 "holding_ratio": "{:.2%}",
+                "win_rate": "{:.2%}",
+                "avg_win": "{:.4f}",
+                "avg_loss": "{:.4f}",
+                "payoff_ratio": "{:.2f}",
+                "profit_factor": "{:.2f}",
+                "expectancy": "{:.4f}",
             }
         ),
         use_container_width=True,
@@ -887,10 +927,16 @@ def render_strategy_comparison(result, lang: str) -> None:
                         "buy_threshold": "{:.1f}",
                         "sell_threshold": "{:.1f}",
                         "threshold": "{:.1f}",
+                        "validation_objective": "{:.4f}",
+                        "validation_fold_count": "{:.0f}",
+                        "validation_expectancy": "{:.4f}",
+                        "validation_profit_factor": "{:.2f}",
+                        "validation_win_rate": "{:.2%}",
                         "validation_strategy_return": "{:.4f}",
                         "validation_sharpe": "{:.4f}",
                         "validation_max_drawdown": "{:.4f}",
                         "validation_entry_count": "{:.0f}",
+                        "validation_entry_blocked_count": "{:.0f}",
                     }
                 ),
                 use_container_width=True,
@@ -1371,6 +1417,52 @@ def main() -> None:
         )
         cost_bps = st.number_input(tr(lang, "cost_bps"), 0.0, 100.0, 10.0, 1.0)
 
+        st.header(tr(lang, "objective_settings"))
+        objective_sharpe_weight = st.number_input(tr(lang, "objective_sharpe_weight"), 0.0, 2.0, 0.10, 0.05)
+        objective_drawdown_penalty = st.number_input(tr(lang, "objective_drawdown_penalty"), 0.0, 5.0, 0.50, 0.10)
+        objective_turnover_penalty = st.number_input(tr(lang, "objective_turnover_penalty"), 0.0, 0.05, 0.001, 0.001, format="%.3f")
+        max_validation_drawdown = st.slider(tr(lang, "max_validation_drawdown"), 0.05, 0.80, 0.25, 0.05)
+
+        st.header(tr(lang, "entry_filter_settings"))
+        enable_entry_filters = st.checkbox(tr(lang, "enable_entry_filters"), value=True)
+        max_entry_rsi = st.slider(tr(lang, "max_entry_rsi"), 50.0, 95.0, 75.0, 1.0, disabled=not enable_entry_filters)
+        max_entry_bias_20 = st.slider(tr(lang, "max_entry_bias_20"), 0.0, 0.50, 0.12, 0.01, disabled=not enable_entry_filters)
+        max_entry_atr_pct_rank = st.slider(tr(lang, "max_entry_atr_pct_rank"), 50.0, 100.0, 85.0, 1.0, disabled=not enable_entry_filters)
+        max_entry_vol_chg_rank = st.slider(tr(lang, "max_entry_vol_chg_rank"), 50.0, 100.0, 90.0, 1.0, disabled=not enable_entry_filters)
+
+        st.header(tr(lang, "trend_timing_settings"))
+        enable_trend_timing_filter = st.checkbox(tr(lang, "enable_trend_timing_filter"), value=True)
+        min_trend_score = st.slider(tr(lang, "min_trend_score"), 0.0, 100.0, 55.0, 5.0, disabled=not enable_trend_timing_filter)
+        min_entry_timing_score = st.slider(
+            tr(lang, "min_entry_timing_score"),
+            0.0,
+            100.0,
+            20.0,
+            5.0,
+            disabled=not enable_trend_timing_filter,
+        )
+
+        st.header(tr(lang, "risk_settings"))
+        enable_position_sizing = st.checkbox(tr(lang, "enable_position_sizing"), value=True)
+        risk_per_trade_pct = st.slider(tr(lang, "risk_per_trade_pct"), 0.1, 5.0, 1.0, 0.1, disabled=not enable_position_sizing)
+        max_position_size = st.slider(tr(lang, "max_position_size"), 5.0, 100.0, 100.0, 5.0, disabled=not enable_position_sizing)
+        min_stop_loss_pct = st.slider(tr(lang, "min_stop_loss_pct"), 0.5, 10.0, 1.0, 0.5, disabled=not enable_position_sizing)
+        enable_drawdown_derisk = st.checkbox(tr(lang, "enable_drawdown_derisk"), value=True)
+        derisk_drawdown_pct = st.slider(tr(lang, "derisk_drawdown_pct"), 5.0, 50.0, 10.0, 5.0, disabled=not enable_drawdown_derisk)
+        derisk_position_multiplier = st.slider(
+            tr(lang, "derisk_position_multiplier"),
+            0.10,
+            1.00,
+            0.50,
+            0.05,
+            disabled=not enable_drawdown_derisk,
+        )
+
+        st.header(tr(lang, "validation_split_settings"))
+        enable_purged_embargo = st.checkbox(tr(lang, "enable_purged_embargo"), value=True)
+        embargo_days = st.number_input(tr(lang, "embargo_days"), 0, 60, 5, 1, disabled=not enable_purged_embargo)
+        walk_forward_folds = st.number_input(tr(lang, "walk_forward_folds"), 1, 6, 3, 1)
+
         st.header(tr(lang, "barrier_settings"))
         barrier_options = {
             tr(lang, "atr_barrier_mode"): "atr",
@@ -1497,6 +1589,28 @@ def main() -> None:
                 atr_take_profit_mult=atr_take_profit_mult,
                 atr_stop_loss_mult=atr_stop_loss_mult,
                 max_holding_days=int(max_holding_days),
+                objective_sharpe_weight=objective_sharpe_weight,
+                objective_drawdown_penalty=objective_drawdown_penalty,
+                objective_turnover_penalty=objective_turnover_penalty,
+                max_validation_drawdown=max_validation_drawdown,
+                enable_entry_filters=enable_entry_filters,
+                max_entry_rsi=max_entry_rsi,
+                max_entry_bias_20=max_entry_bias_20,
+                max_entry_atr_pct_rank=max_entry_atr_pct_rank,
+                max_entry_vol_chg_rank=max_entry_vol_chg_rank,
+                enable_trend_timing_filter=enable_trend_timing_filter,
+                min_trend_score=min_trend_score,
+                min_entry_timing_score=min_entry_timing_score,
+                enable_position_sizing=enable_position_sizing,
+                risk_per_trade_pct=risk_per_trade_pct / 100.0,
+                max_position_size=max_position_size / 100.0,
+                min_stop_loss_pct=min_stop_loss_pct / 100.0,
+                enable_drawdown_derisk=enable_drawdown_derisk,
+                derisk_drawdown_pct=derisk_drawdown_pct / 100.0,
+                derisk_position_multiplier=derisk_position_multiplier,
+                enable_purged_embargo=enable_purged_embargo,
+                embargo_days=int(embargo_days),
+                walk_forward_folds=int(walk_forward_folds),
             )
         if use_finmind:
             result.data_notes.insert(0, f"FinMind token source: {finmind_token_source}.")
@@ -1517,6 +1631,28 @@ def main() -> None:
             "atr_take_profit_mult": atr_take_profit_mult,
             "atr_stop_loss_mult": atr_stop_loss_mult,
             "max_holding_days": int(max_holding_days),
+            "objective_sharpe_weight": objective_sharpe_weight,
+            "objective_drawdown_penalty": objective_drawdown_penalty,
+            "objective_turnover_penalty": objective_turnover_penalty,
+            "max_validation_drawdown": max_validation_drawdown,
+            "enable_entry_filters": enable_entry_filters,
+            "max_entry_rsi": max_entry_rsi,
+            "max_entry_bias_20": max_entry_bias_20,
+            "max_entry_atr_pct_rank": max_entry_atr_pct_rank,
+            "max_entry_vol_chg_rank": max_entry_vol_chg_rank,
+            "enable_trend_timing_filter": enable_trend_timing_filter,
+            "min_trend_score": min_trend_score,
+            "min_entry_timing_score": min_entry_timing_score,
+            "enable_position_sizing": enable_position_sizing,
+            "risk_per_trade_pct": risk_per_trade_pct,
+            "max_position_size": max_position_size,
+            "min_stop_loss_pct": min_stop_loss_pct,
+            "enable_drawdown_derisk": enable_drawdown_derisk,
+            "derisk_drawdown_pct": derisk_drawdown_pct,
+            "derisk_position_multiplier": derisk_position_multiplier,
+            "enable_purged_embargo": enable_purged_embargo,
+            "embargo_days": int(embargo_days),
+            "walk_forward_folds": int(walk_forward_folds),
         }
 
     result = st.session_state.get("triple_barrier_result")
@@ -1582,6 +1718,11 @@ def main() -> None:
         e1.metric(tr(lang, "entry_count"), f"{d['entry_count']}")
         e2.metric(tr(lang, "holding_ratio"), fmt_pct(d["holding_ratio"]))
         e3.metric(tr(lang, "total_cost"), fmt_pct(d["total_cost"]))
+        edge1, edge2, edge3, edge4 = st.columns(4)
+        edge1.metric(tr(lang, "expectancy"), fmt_pct(d["expectancy"]))
+        edge2.metric(tr(lang, "profit_factor"), f"{d['profit_factor']:.2f}")
+        edge3.metric(tr(lang, "win_rate"), fmt_pct(d["win_rate"]))
+        edge4.metric(tr(lang, "entry_blocked_count"), f"{d['entry_blocked_count']}")
         t1, t2 = st.columns(2)
         t1.metric(tr(lang, "selected_threshold"), f"{result.selected_threshold:.1f}")
         t2.metric(tr(lang, "selected_sell_threshold"), f"{result.selected_sell_threshold:.1f}")
@@ -1594,10 +1735,15 @@ def main() -> None:
                         "buy_threshold": "{:.1f}",
                         "sell_threshold": "{:.1f}",
                         "threshold": "{:.1f}",
+                        "validation_objective": "{:.4f}",
+                        "validation_expectancy": "{:.4f}",
+                        "validation_profit_factor": "{:.2f}",
+                        "validation_win_rate": "{:.2%}",
                         "validation_strategy_return": "{:.4f}",
                         "validation_sharpe": "{:.4f}",
                         "validation_max_drawdown": "{:.4f}",
                         "validation_entry_count": "{:.0f}",
+                        "validation_entry_blocked_count": "{:.0f}",
                     }
                 ),
                 use_container_width=True,
@@ -1649,11 +1795,19 @@ def main() -> None:
             "fundamental_score",
             "chip_score",
             "final_score",
+            "trend_score",
+            "entry_timing_score",
             "fundamental_contribution",
             "chip_contribution",
             "target_position",
+            "raw_position",
             "position",
+            "drawdown_derisk_multiplier",
             "tb_trade_event",
+            "entry_filter_ok",
+            "entry_filter_overextended",
+            "entry_filter_crowded",
+            "entry_filter_trend_timing",
             "entry_take_profit_pct",
             "entry_stop_loss_pct",
             "strategy_cum",

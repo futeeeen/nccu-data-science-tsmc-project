@@ -1,5 +1,23 @@
 # History
 
+## 2026-05-30
+- Recorded and prepared the Triple Barrier strategy upgrade for GitHub backup.
+- Included the 2026-05-26 Triple Barrier training plan document describing completed and future modeling directions.
+- Confirmed the Triple Barrier app now includes statistical-edge threshold selection, trend/timing entry gates, risk-based position sizing, drawdown de-risking, purged/embargo validation, and walk-forward threshold folds.
+- Validation: ran `python -m py_compile triple_barrier_strategy\triple_barrier_system.py triple_barrier_strategy\triple_barrier_app.py triple_barrier_strategy\project_glossary.py` and `git diff --check`.
+
+## 2026-05-26
+- Added a Triple Barrier training plan documenting statistical edge, anti-chasing filters, drawdown discipline, and future trend/entry model separation.
+- Updated the Triple Barrier strategy validation objective to prefer expectancy, Sharpe reward, drawdown control, and lower turnover instead of selecting thresholds only by return.
+- Added trade-level statistical edge metrics including win rate, average win/loss, profit factor, payoff ratio, and expectancy.
+- Added anti-chasing entry filters that can block high-score entries when RSI, price extension, ATR percentile, or volume-change percentile are too hot.
+- Exposed validation objective weights, max validation drawdown limit, and entry filter controls in `triple_barrier_app`.
+- Added glossary coverage for expectancy, profit factor, validation objective, and entry discipline filter columns.
+- Added trend/timing gates so Triple Barrier entries require both broader trend support and a patient entry setup.
+- Added risk-based position sizing plus drawdown-based exposure reduction to avoid all-in/all-out trading.
+- Added purged/embargo split handling and walk-forward validation folds for threshold search to reduce label overlap leakage and single-window overfitting.
+- Expanded Triple Barrier glossary coverage for trend score, entry timing score, position sizing, drawdown de-risking, purged embargo validation, and walk-forward folds.
+
 ## 2026-05-23
 - Added a GitHub Actions workflow to deploy `project_site/` automatically to GitHub Pages when changes are pushed to `main`.
 - Added `project_site/.nojekyll` so the static HTML site is served directly without Jekyll processing.
